@@ -23,7 +23,7 @@ const readLoginShellPath = (env = process.env) =>
     const marker = '__MULTIPRISE_PATH__';
     execFile(
       shell,
-      ['-lc', `printf '${marker}%s' "$PATH"`],
+      ['-ilc', `printf '${marker}%s' "$PATH"`],
       { env, timeout: 5000, maxBuffer: 1024 * 1024 },
       (error, stdout) => {
         if (error) {

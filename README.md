@@ -98,7 +98,7 @@ Child-process `stdout` and `stderr` are captured by the TypeScript backend and s
 
 The result is a searchable terminal-style log surface without the unreadable escape codes commonly produced by development servers.
 
-Packaged macOS apps opened from Finder do not inherit the terminal's `PATH`. Before the backend loads, Electron now imports the user's login-shell path so npm, pnpm, Bun, Cargo, and other shell-installed runtimes remain available. Every command is preflighted before spawn, turning a missing runtime into an immediate actionable error instead of a silent or repeated shell failure.
+Packaged macOS apps opened from Finder do not inherit the terminal's `PATH`. Before the backend loads, Electron now imports the user's interactive login-shell path so npm, pnpm, Bun, Cargo, and other shell-installed runtimes remain available. Every command is preflighted before spawn, turning a missing runtime into an immediate actionable error instead of a silent or repeated shell failure.
 
 ### 7. Design the renderer around the working session
 
