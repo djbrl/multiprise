@@ -26,6 +26,7 @@ import { detectProject, discoverProjectServices, scanProjects } from './scanner'
 import { listListeningPorts, pickRandomPort } from './ports'
 import { clearLogs, getLogs, getProcessPid, getProcessStatus, startProcess, stopProcess } from './processes'
 import { persistProjects, persistSettings } from './state'
+import { assertCommandAvailable } from './runtime'
 
 const DEFAULT_DOCKER_STOP = 'docker compose down'
 
@@ -174,15 +175,20 @@ function projectRoleFallback(project: Project): 'backend' | 'frontend' | 'servic
 }
 
 async function spawnCommand(command: string, cwd: string, env?: Record<string, string>) {
+  const processEnv = { ...process.env, ...(env ?? {}) }
+  assertCommandAvailable(command, processEnv)
   return new Promise<void>((resolve, reject) => {
     const child = spawn(command, {
       cwd,
-      env: { ...process.env, ...(env ?? {}) },
+      env: processEnv,
       shell: true,
       stdio: 'ignore'
     })
     child.on('error', (err) => reject(err))
-    child.on('close', () => resolve())
+    child.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`Command exited with code ${code ?? 'unknown'}`))
+    })
   })
 }
 

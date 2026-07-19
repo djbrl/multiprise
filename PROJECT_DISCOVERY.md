@@ -27,7 +27,9 @@ Commands follow the detected package manager:
 | Yarn | `yarn dev` |
 | Bun | `bun run dev` |
 
-The package manager is inferred from lockfiles in the service directory. npm is the fallback.
+The package manager is inferred from lockfiles in the service directory or its selected project root. npm is the fallback.
+
+When Multiprise starts from Finder or the Dock on macOS, it imports `PATH` from the user's login shell before launching services. This makes runtimes installed through Homebrew, fnm, nvm, Cargo, Bun, and similar shell-managed tools available to the packaged app. If a detected runtime is still unavailable, launch stops immediately with a clear runtime-not-found message.
 
 ### Cargo.toml
 

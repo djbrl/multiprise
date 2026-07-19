@@ -2,6 +2,7 @@ const { app, BrowserWindow, WebContentsView, ipcMain, shell } = require('electro
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { hydrateShellPath } = require('./shell-path.cjs');
 let startServer;
 let stopServer;
 
@@ -438,6 +439,7 @@ const createWindow = () => {
 };
 
 app.whenReady().then(async () => {
+  await hydrateShellPath();
   if (app.isPackaged) {
     process.env.MULTIPRISE_DATA_DIR = path.join(app.getPath('userData'), 'data');
   }

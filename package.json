@@ -46,6 +46,7 @@
     "files": [
       "main.cjs",
       "preload.cjs",
+      "shell-path.cjs",
       "package.json",
       "port-ranges.json",
       "renderer/dist/**/*",

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { type LogLine, type ProcessStatus } from './types'
+import { assertCommandAvailable } from './runtime'
 
 const MAX_LOG_LINES = 500
 
@@ -94,9 +95,11 @@ export function startProcess(options: {
   if (processes.has(id)) {
     throw new Error('Process already running')
   }
+  const processEnv = { ...process.env, ...(env ?? {}) }
+  assertCommandAvailable(command, processEnv)
   const child = spawn(command, {
     cwd,
-    env: { ...process.env, ...(env ?? {}) },
+    env: processEnv,
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true
