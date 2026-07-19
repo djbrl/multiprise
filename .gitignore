@@ -1,0 +1,12 @@
+node_modules/
+release/
+renderer/dist/
+backend/dist/
+backend/data/*.json
+!backend/data/.gitkeep
+legacy/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

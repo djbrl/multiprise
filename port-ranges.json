@@ -1,0 +1,16 @@
+{
+  "frontend": {
+    "ranges": [
+      { "start": 3000, "end": 4999 },
+      { "start": 5100, "end": 5999 }
+    ],
+    "common_defaults": [3000, 4200, 5173]
+  },
+  "backend": {
+    "ranges": [
+      { "start": 5000, "end": 5099 },
+      { "start": 8000, "end": 8999 }
+    ],
+    "common_defaults": [5000, 8000]
+  }
+}

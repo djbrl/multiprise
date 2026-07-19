@@ -1,0 +1,43 @@
+export {}
+
+declare global {
+  type BrowserTabState = {
+    id: string
+    title: string
+    url: string
+    loading: boolean
+    error?: string | null
+    canGoBack: boolean
+    canGoForward: boolean
+  }
+
+  type BrowserState = {
+    activeTabId: string | null
+    visible: boolean
+    tabs: BrowserTabState[]
+  }
+
+  type BrowserBounds = {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
+
+  interface Window {
+    vibe?: {
+      ping?: () => Promise<{ ok: boolean; time: string }>
+      backendHealth?: () => Promise<{ ok: boolean; url: string | null; port: number | null; time: string }>
+      openExternal?: (url: string) => Promise<void>
+      copyText?: (text: string) => void
+      browser?: {
+        open: (url: string, options?: { title?: string }) => Promise<BrowserState>
+        getState: () => Promise<BrowserState>
+        action: (action: string, payload?: Record<string, unknown>) => Promise<BrowserState>
+        setBounds: (bounds: BrowserBounds) => Promise<BrowserState>
+        hide: () => Promise<BrowserState>
+        onState: (callback: (state: BrowserState) => void) => () => void
+      }
+    }
+  }
+}
