@@ -29,6 +29,48 @@ async function findConfigFile(directory: string) {
   return null
 }
 
+function npmScriptFromCommand(command: string) {
+  const runMatch = command.match(/^\s*npm\s+(?:run|run-script)\s+([^\s;&|]+)/)
+  if (runMatch) return runMatch[1]
+
+  const lifecycleMatch = command.match(/^\s*npm\s+(start|stop|restart|test)(?:\s|$)/)
+  return lifecycleMatch?.[1] ?? null
+}
+
+async function validateServiceCommand(rootDir: string, service: MultipriseService) {
+  if (!service.start) return
+
+  const script = npmScriptFromCommand(service.start)
+  if (!script) return
+
+  const cwd = normalizeCwd(service.cwd)
+  const serviceDir = path.resolve(rootDir, cwd)
+  const packagePath = path.join(serviceDir, 'package.json')
+  const raw = await fs.readFile(packagePath, 'utf-8').catch(() => null)
+  if (!raw) {
+    throw new Error(`Configured command "${service.start}" requires ${path.relative(rootDir, packagePath) || 'package.json'}, but that file was not found`)
+  }
+
+  let scripts: Record<string, string>
+  try {
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, string> }
+    scripts = parsed.scripts ?? {}
+  } catch (err) {
+    throw new Error(`Could not parse ${path.relative(rootDir, packagePath) || 'package.json'}`)
+  }
+
+  if (scripts[script]) return
+  if (script === 'start' && await fileExists(path.join(serviceDir, 'server.js'))) return
+
+  const available = Object.keys(scripts)
+  const suffix = available.length > 0 ? ` Available scripts: ${available.join(', ')}.` : ' No npm scripts are defined.'
+  throw new Error(`Configured command "${service.start}" is invalid for ${cwd === '.' ? 'package.json' : `${cwd}/package.json`}: script "${script}" does not exist.${suffix}`)
+}
+
+async function validateConfig(rootDir: string, config: MultipriseConfig) {
+  await Promise.all(config.services.map((service) => validateServiceCommand(rootDir, service)))
+}
+
 export async function loadMultipriseConfig(startPath: string): Promise<{ rootDir: string; config: MultipriseConfig } | null> {
   let current = startPath
   try {
@@ -48,6 +90,7 @@ export async function loadMultipriseConfig(startPath: string): Promise<{ rootDir
       if (!config?.services || !Array.isArray(config.services) || config.services.length === 0) {
         throw new Error('multiprise.json has no services')
       }
+      await validateConfig(current, config)
       return { rootDir: current, config }
     }
     const parent = path.dirname(current)
@@ -71,6 +114,7 @@ export async function loadMultipriseConfigAtRoot(rootDir: string): Promise<Multi
   if (!config?.services || !Array.isArray(config.services) || config.services.length === 0) {
     throw new Error('multiprise.json has no services')
   }
+  await validateConfig(rootDir, config)
   return config
 }
 
