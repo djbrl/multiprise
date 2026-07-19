@@ -17,7 +17,7 @@ A normal multi-project development session quickly turns into terminal managemen
 - search through several streams of logs;
 - reopen the correct local URL after a restart.
 
-Multiprise turns that repeated setup into project configuration. A project is the parent folder selected by the user, and a root-level `multiprise.json` describes the services inside it.
+Multiprise turns that repeated setup into project discovery. A project is the parent folder selected by the user, and its existing manifests describe the services inside it.
 
 ## How It Was Made
 
@@ -48,39 +48,23 @@ The Rust server was retired and the application was rebuilt around Electron. The
 
 Nuxt was intentionally left out. Multiprise does not need server-side rendering, routing conventions, or another runtime layer inside Electron.
 
-### 3. Define a portable project contract
+### 3. Make project manifests the source of truth
 
-Automatic script detection was useful during prototyping, but projects differ too much for guesses to be dependable. Multiprise therefore requires a root-level `multiprise.json` file.
+An early version required a root-level `multiprise.json`. That created a second list of commands which could drift away from the real project. The requirement was removed after exactly that failure occurred: a backend supported `npm start`, while its stale Multiprise config still requested a nonexistent `npm run dev`.
 
-The file declares each service's working directory, start command, and environment variables. Port placeholders are resolved immediately before launch:
+Multiprise now discovers services directly from files the project already owns:
 
-```json
-{
-  "services": [
-    {
-      "name": "backend",
-      "cwd": "backend",
-      "start": "npm run dev",
-      "env": {
-        "PORT": "{{BACKEND_PORT}}"
-      }
-    },
-    {
-      "name": "frontend",
-      "cwd": "frontend",
-      "start": "npm run dev",
-      "env": {
-        "FRONTEND_PORT": "{{FRONTEND_PORT}}",
-        "VITE_API_URL": "http://localhost:{{BACKEND_PORT}}"
-      }
-    }
-  ]
-}
-```
+- `package.json` scripts for npm, pnpm, Yarn, and Bun projects;
+- `Cargo.toml` for Rust services;
+- `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, or `compose.yaml` for optional Docker services.
 
-This keeps application code portable: Multiprise injects configuration through environment variables instead of rewriting source files. The older `vibemanager.json` filename remains readable for backward compatibility.
+For JavaScript services, the command is selected only from scripts that actually exist. The preference order is `dev`, `start`, `start:dev`, `serve`, `develop`, `watch`, then `preview`. An npm `start` script is launched as `npm start`; other npm scripts use `npm run <script>`.
 
-See [`MULTIPRISE_JSON.md`](./MULTIPRISE_JSON.md) for the complete schema and token reference.
+When a selected parent folder contains runnable child services, Multiprise ignores a root orchestration script to avoid launching the same backend and frontend twice. Docker Compose is detected separately and remains manual.
+
+Port configuration stays portable because Multiprise injects conventional environment variables instead of rewriting project files: `PORT`, `SERVICE_PORT`, `BACKEND_PORT`, `FRONTEND_PORT`, `API_PORT`, `VITE_PORT`, `VITE_API_PORT`, and `VITE_API_URL`.
+
+See [`PROJECT_DISCOVERY.md`](./PROJECT_DISCOVERY.md) for the complete discovery rules.
 
 ### 4. Build collision-free port assignment
 
@@ -91,7 +75,7 @@ The current defaults live in [`port-ranges.json`](./port-ranges.json):
 - frontend: `3000-4999` and `5100-5999`;
 - backend: `5000-5099` and `8000-8999`.
 
-The ranges deliberately avoid overlap. Manual mode is strict: the user must select a port, and launch fails clearly if that port is unavailable. Launching a whole project resolves backend and frontend ports together so both services receive `BACKEND_PORT`, `FRONTEND_PORT`, `PORT`, and any configured URL values consistently.
+The ranges deliberately avoid overlap. Manual mode is strict: the user must select a port, and launch fails clearly if that port is unavailable. Launching a whole project resolves backend and frontend ports together so both services receive `BACKEND_PORT`, `FRONTEND_PORT`, `PORT`, and inferred frontend API values consistently.
 
 ### 5. Add process ownership and reliable shutdown
 
@@ -164,7 +148,7 @@ flowchart LR
     UI["Vue 3 renderer"] -->|"window.multiprise IPC"| Preload["Preload bridge"]
     Preload --> Main["Electron main process"]
     Main --> API["Local TypeScript orchestrator"]
-    API --> Config["multiprise.json"]
+    API --> Manifests["package.json, Cargo.toml, Compose"]
     API --> Ports["Port scanner"]
     API --> Processes["Child processes"]
     Processes --> Logs["stdout and stderr"]
@@ -179,12 +163,12 @@ The renderer never receives unrestricted Node.js access. Privileged operations c
 
 When a user launches a project, Multiprise performs this sequence:
 
-1. Load and validate the project's `multiprise.json`.
+1. Scan the selected project root for runnable manifests.
 2. Separate regular services from Docker services.
 3. Inspect active listeners and managed process state.
 4. Allocate or validate one port per regular service.
 5. Resolve `{{PORT}}`, `{{BACKEND_PORT}}`, and `{{FRONTEND_PORT}}` tokens.
-6. Spawn each configured command in its declared working directory.
+6. Spawn each detected command in its manifest directory.
 7. Record PID, process group, port, project, and service ownership.
 8. Stream sanitized logs to the renderer.
 9. Refresh active ports and service state.
@@ -201,7 +185,6 @@ multiprise/
 │   │   ├── processes.ts         # Child-process lifecycle and logs
 │   │   ├── ports.ts             # Port inspection and allocation
 │   │   ├── store.ts             # Persistent project/settings storage
-│   │   └── multipriseconfig.ts  # Config loading and token resolution
 │   └── tsconfig.json
 ├── renderer/
 │   ├── src/App.vue              # Main Vue application
@@ -211,7 +194,7 @@ multiprise/
 ├── main.cjs                     # Electron main process
 ├── preload.cjs                  # Context-isolated renderer bridge
 ├── port-ranges.json             # Automatic allocation ranges
-├── MULTIPRISE_JSON.md           # Tracked-project configuration guide
+├── PROJECT_DISCOVERY.md         # Manifest discovery rules
 └── package.json                 # Development, build, and package scripts
 ```
 
@@ -226,7 +209,7 @@ Multiprise can discover common project layouts and commands for:
 - Rust/Cargo;
 - Docker Compose.
 
-Discovery helps explain what is present, but `multiprise.json` remains the source of truth for launch commands.
+The detected manifest is the source of truth. Multiprise refreshes commands from disk when it starts, so script changes do not require re-importing a project.
 
 ## Run From Source
 
@@ -288,7 +271,7 @@ Artifacts are written to `release/`. The current package target is Apple Silicon
 - The renderer uses context isolation instead of direct Node.js access.
 - Embedded browser pages are sandboxed and limited to HTTP(S).
 - Personal project paths, settings, logs, and generated release files are excluded from Git.
-- Commands in `multiprise.json` are trusted local project instructions. Review a project's config before launching an unfamiliar repository.
+- Project manifest scripts are trusted local instructions. Review an unfamiliar repository's scripts before launching it.
 
 ## Current Limitations
 
@@ -296,12 +279,11 @@ Artifacts are written to `release/`. The current package target is Apple Silicon
 - The app is not signed or notarized, so macOS may require an explicit first-open approval.
 - Windows and Linux packaging have not been implemented.
 - Resource graphs and historical metrics are not part of the first release.
-- Project configuration is JSON rather than a graphical editor.
 
 ## Lessons From the Build
 
 - A local orchestration tool benefits from a desktop shell more than a browser-first architecture.
-- Environment injection is more portable than rewriting each project's code or config files.
+- Reading existing manifests avoids stale duplicate configuration, while environment injection remains more portable than rewriting project code.
 - Port ownership and process ownership are different facts and must be modeled separately.
 - Stopping a command is not enough when development tools create child watchers; process groups matter.
 - Packaged Electron apps need an explicit writable data path established before backend initialization.

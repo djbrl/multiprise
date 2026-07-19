@@ -87,31 +87,32 @@ export type UsedPort = {
   command?: string | null
 }
 
-export type MultipriseService = {
-  name?: string
-  cwd?: string
-  start?: string
-  env?: Record<string, string>
-  role?: 'backend' | 'frontend' | 'service'
+export type DiscoveredService = {
+  name: string
+  path: string
+  cwd: string
+  command: string
+  role: 'backend' | 'frontend' | 'service'
+  kind: ProjectKind
+  source: 'package.json' | 'Cargo.toml' | 'compose'
+  package_manager?: string | null
+  scripts: Record<string, string>
 }
 
-export type MultipriseServicePreview = {
+export type ServicePreview = {
   name: string
-  role?: 'backend' | 'frontend' | 'service'
-  cwd?: string
-  start?: string
+  role: 'backend' | 'frontend' | 'service'
+  cwd: string
+  start: string
+  source: DiscoveredService['source']
 }
 
 export type ProjectInspectResult = {
   path: string
   name: string
-  has_config: boolean
+  has_services: boolean
   error?: string | null
-  services?: MultipriseServicePreview[]
-}
-
-export type MultipriseConfig = {
-  services: MultipriseService[]
+  services?: ServicePreview[]
 }
 
 export type StartProjectPayload = {

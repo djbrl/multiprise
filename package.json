@@ -13,7 +13,7 @@
     "build:api": "npm run build:backend",
     "build:web": "npm run build:renderer",
     "build:renderer": "vite build --config renderer/vite.config.js",
-    "build:backend": "tsc -p backend/tsconfig.json",
+    "build:backend": "node scripts/clean-backend.mjs && tsc -p backend/tsconfig.json",
     "start": "electron .",
     "package:mac": "npm run build:api && npm run build:web && electron-builder --mac"
   },

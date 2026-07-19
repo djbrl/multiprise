@@ -22,10 +22,9 @@ import {
   type UpdateProjectPayload,
   type UsedPort
 } from './types'
-import { detectProject, scanProjects } from './scanner'
+import { detectProject, discoverProjectServices, scanProjects } from './scanner'
 import { listListeningPorts, pickRandomPort } from './ports'
 import { clearLogs, getLogs, getProcessPid, getProcessStatus, startProcess, stopProcess } from './processes'
-import { loadMultipriseConfig, loadMultipriseConfigAtRoot, normalizeServiceCwd, resolveServiceEnv, selectService } from './multipriseconfig'
 import { persistProjects, persistSettings } from './state'
 
 const DEFAULT_DOCKER_STOP = 'docker compose down'
@@ -295,70 +294,48 @@ async function openInFileManager(targetPath: string) {
   throw new Error(`Open in file manager failed (${attempt.error ?? 'unknown'})`)
 }
 
-async function resolveServiceContext(project: Project) {
-  const configInfo = await loadMultipriseConfig(project.path)
-  if (!configInfo) {
-    throw new Error('Missing multiprise.json in project root')
-  }
-  const { rootDir, config } = configInfo
-  const selection = selectService({ rootDir, config, projectPath: project.path })
-  return {
-    service: selection.service,
-    cwd: selection.serviceDir
-  }
-}
-
-async function resolveStartCommand(project: Project, payload: StartProjectPayload) {
-  const { service, cwd } = await resolveServiceContext(project)
-
-  const command = service.start ?? payload.command ?? project.command
-  if (!command) {
-    throw new Error('No start command configured')
+async function resolveStartCommand(project: Project) {
+  if (project.kind === 'docker_compose') {
+    return {
+      command: project.command || 'docker compose up -d --build',
+      cwd: project.path
+    }
   }
 
-  return {
-    command,
-    cwd,
-    service
+  const detection = await detectProject(project.path, project.root_path ?? project.path)
+  const command = detection.suggested_command
+  if (!command || /^docker(?:-|\s)/.test(command)) {
+    throw new Error(`No runnable development script found in ${project.path}`)
   }
+
+  return { command, cwd: project.path }
 }
 
 async function buildStartEnv(options: {
-  serviceEnv?: Record<string, string>
   payloadEnv?: Record<string, string>
   role: 'backend' | 'frontend' | 'service'
   port?: number
 }) {
-  const { serviceEnv, payloadEnv, role, port } = options
-  const envFromPayload = payloadEnv ?? {}
-  const context = {
-    servicePort: port,
-    backendPort: envFromPayload.BACKEND_PORT ? Number(envFromPayload.BACKEND_PORT) : undefined,
-    frontendPort: envFromPayload.FRONTEND_PORT ? Number(envFromPayload.FRONTEND_PORT) : undefined
-  }
+  const { payloadEnv, role, port } = options
+  const merged: Record<string, string> = { ...(payloadEnv ?? {}) }
+  const backendPort = merged.BACKEND_PORT ? Number(merged.BACKEND_PORT) : role === 'backend' ? port : undefined
+  const frontendPort = merged.FRONTEND_PORT ? Number(merged.FRONTEND_PORT) : role === 'frontend' ? port : undefined
 
-  if (role === 'backend' && port && !context.backendPort) {
-    context.backendPort = port
+  if (backendPort) {
+    merged.BACKEND_PORT ||= String(backendPort)
+    merged.API_PORT ||= String(backendPort)
+    if (role === 'frontend') {
+      merged.VITE_API_PORT ||= String(backendPort)
+      merged.VITE_API_URL ||= `http://localhost:${backendPort}`
+    }
   }
-  if (role === 'frontend' && port && !context.frontendPort) {
-    context.frontendPort = port
+  if (frontendPort) {
+    merged.FRONTEND_PORT ||= String(frontendPort)
+    merged.VITE_PORT ||= String(frontendPort)
   }
-
-  const resolvedServiceEnv = resolveServiceEnv(serviceEnv, context)
-  const merged = {
-    ...resolvedServiceEnv,
-    ...envFromPayload
-  }
-
-  if (context.backendPort && !merged.BACKEND_PORT) {
-    merged.BACKEND_PORT = String(context.backendPort)
-  }
-  if (context.frontendPort && !merged.FRONTEND_PORT) {
-    merged.FRONTEND_PORT = String(context.frontendPort)
-  }
-
-  if (port && !merged.PORT && !merged.SERVICE_PORT) {
-    merged.PORT = String(port)
+  if (port) {
+    merged.PORT ||= String(port)
+    merged.SERVICE_PORT ||= String(port)
   }
 
   return merged
@@ -416,54 +393,35 @@ export async function createApp(state: AppState) {
     if (!stats.isDirectory()) {
       return res.status(400).send(`Path is not a folder: ${projectPath}`)
     }
-    const normalizedRoot = projectPath
-    if (state.projects.some((project) => cleanPath(project.root_path ?? project.path) === normalizedRoot)) {
+    if (state.projects.some((project) => cleanPath(project.root_path ?? project.path) === projectPath)) {
       return res.status(400).send('Project already exists')
     }
 
-    let config
-    try {
-      config = await loadMultipriseConfigAtRoot(projectPath)
-    } catch (err) {
-      return res.status(400).send(err instanceof Error ? err.message : 'Invalid multiprise.json')
-    }
-    if (!config) {
-      return res.status(400).send('Missing multiprise.json in project root')
+    const services = await discoverProjectServices(projectPath, state.settings)
+    if (!services.length) {
+      return res.status(400).send('No runnable package.json, Cargo.toml, or Docker Compose services found')
     }
 
-    const rootName = payload.name ?? path.basename(projectPath)
     const iconPath = await findProjectIcon(projectPath)
     const createdAt = new Date().toISOString()
-
-    const created: Project[] = config.services.map((service, index) => {
-      const cwd = normalizeServiceCwd(service.cwd)
-      const servicePath = cleanPath(path.resolve(projectPath, cwd))
-      const startCommand = service.start ?? null
-      const role = service.role ?? 'service'
-      const name =
-        service.name ??
-        (service.role ? role.charAt(0).toUpperCase() + role.slice(1) : cwd !== '.' ? path.basename(cwd) : `${rootName} Service ${index + 1}`)
-      const isDocker = !!startCommand && /docker\s+compose|docker-compose/i.test(startCommand)
-      const kind: ProjectKind = isDocker ? 'docker_compose' : 'command'
-      return {
-        id: randomUUID(),
-        name,
-        path: servicePath,
-        root_path: projectPath,
-        tags: [],
-        command: startCommand,
-        stop_command: isDocker ? 'docker compose down' : null,
-        port: null,
-        icon_path: iconPath,
-        kind,
-        role,
-        docker_running: false,
-        docker_started_at: null,
-        last_exit_code: null,
-        last_exit_at: null,
-        created_at: createdAt
-      }
-    })
+    const created: Project[] = services.map((service) => ({
+      id: randomUUID(),
+      name: service.name,
+      path: cleanPath(service.path),
+      root_path: projectPath,
+      tags: [],
+      command: service.command,
+      stop_command: service.kind === 'docker_compose' ? 'docker compose down' : null,
+      port: null,
+      icon_path: iconPath,
+      kind: service.kind,
+      role: service.role,
+      docker_running: false,
+      docker_started_at: null,
+      last_exit_code: null,
+      last_exit_at: null,
+      created_at: createdAt
+    }))
 
     state.projects = [...created, ...state.projects]
     await persistProjects(state)
@@ -485,44 +443,33 @@ export async function createApp(state: AppState) {
         results.push({
           path: projectPath,
           name,
-          has_config: false,
+          has_services: false,
           error: 'Folder not found'
         })
         continue
       }
+
       try {
-        const config = await loadMultipriseConfigAtRoot(projectPath)
-        if (!config) {
-          results.push({
-            path: projectPath,
-            name,
-            has_config: false,
-            error: 'Missing multiprise.json at root'
-          })
-          continue
-        }
-        const services = config.services.map((service, index) => {
-          const cwd = normalizeServiceCwd(service.cwd)
-          const fallbackName = cwd !== '.' ? path.basename(cwd) : `Service ${index + 1}`
-          return {
-            name: service.name ?? fallbackName,
-            role: service.role ?? undefined,
-            cwd,
-            start: service.start ?? undefined
-          }
-        })
+        const services = await discoverProjectServices(projectPath, state.settings)
         results.push({
           path: projectPath,
           name,
-          has_config: true,
-          services
+          has_services: services.length > 0,
+          error: services.length > 0 ? null : 'No runnable services found',
+          services: services.map((service) => ({
+            name: service.name,
+            role: service.role,
+            cwd: service.cwd,
+            start: service.command,
+            source: service.source
+          }))
         })
       } catch (err) {
         results.push({
           path: projectPath,
           name,
-          has_config: false,
-          error: err instanceof Error ? err.message : 'Invalid multiprise.json'
+          has_services: false,
+          error: err instanceof Error ? err.message : 'Service discovery failed'
         })
       }
     }
@@ -614,9 +561,8 @@ export async function createApp(state: AppState) {
     }
 
     try {
-      const { command, cwd, service } = await resolveStartCommand(project, payload)
+      const { command, cwd } = await resolveStartCommand(project)
       const env = await buildStartEnv({
-        serviceEnv: service.env,
         payloadEnv: payload.env,
         role,
         port
@@ -662,8 +608,7 @@ export async function createApp(state: AppState) {
     if (project.kind === 'docker_compose') {
       const stopCommand = project.stop_command || DEFAULT_DOCKER_STOP
       try {
-        const { cwd } = await resolveServiceContext(project)
-        await spawnCommand(stopCommand, cwd)
+        await spawnCommand(stopCommand, project.path)
       } catch (err) {
         return res.status(400).send('Failed to stop docker project')
       }

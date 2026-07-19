@@ -1,5 +1,6 @@
+import path from 'node:path'
+import { detectProject } from './scanner'
 import { loadProjects, loadSettings, saveProjects, saveSettings } from './store'
-import { loadMultipriseConfig, selectService } from './multipriseconfig'
 import { type Project, type Settings, type ScanState } from './types'
 
 export type AppState = {
@@ -27,52 +28,41 @@ export async function persistSettings(state: AppState) {
 }
 
 function inferRoleFromPath(value: string): 'backend' | 'frontend' | 'service' {
-  const normalized = value.toLowerCase()
-  if (normalized.includes('/frontend')) return 'frontend'
-  if (normalized.includes('/backend')) return 'backend'
+  const segments = value.toLowerCase().split(/[\\/]/)
+  if (segments.some((segment) => ['frontend', 'client', 'web', 'ui'].includes(segment))) return 'frontend'
+  if (segments.some((segment) => ['backend', 'server', 'api'].includes(segment))) return 'backend'
   return 'service'
+}
+
+function inferRootPath(projectPath: string) {
+  const serviceFolder = path.basename(projectPath).toLowerCase()
+  if (['backend', 'frontend', 'server', 'client', 'api', 'web', 'ui'].includes(serviceFolder)) {
+    return path.dirname(projectPath)
+  }
+  return projectPath
 }
 
 export async function normalizeProjects(state: AppState) {
   let changed = false
   for (const project of state.projects) {
     if (!project.root_path) {
-      try {
-        const configInfo = await loadMultipriseConfig(project.path)
-        if (configInfo) {
-          project.root_path = configInfo.rootDir
-          try {
-            const selection = selectService({
-              rootDir: configInfo.rootDir,
-              config: configInfo.config,
-              projectPath: project.path
-            })
-            const inferredRole = inferRoleFromPath(project.path)
-            const configuredRole = selection.service.role
-            const nextRole = configuredRole && configuredRole !== 'service'
-              ? configuredRole
-              : inferredRole
-            if (project.role !== nextRole) {
-              project.role = nextRole
-              changed = true
-            }
-          } catch (err) {
-            // ignore
-          }
-          changed = true
-        }
-      } catch (err) {
-        // ignore
-      }
-      if (!project.root_path) {
-        project.root_path = project.path
-        changed = true
-      }
+      project.root_path = inferRootPath(project.path)
+      changed = true
     }
+
     const inferredRole = inferRoleFromPath(project.path)
     if (!project.role || (project.role === 'service' && inferredRole !== 'service')) {
       project.role = inferredRole
       changed = true
+    }
+
+    if (project.kind === 'command') {
+      const detection = await detectProject(project.path, project.root_path ?? project.path).catch(() => null)
+      const detectedCommand = detection?.suggested_command
+      if (detectedCommand && !/^docker(?:-|\s)/.test(detectedCommand) && project.command !== detectedCommand) {
+        project.command = detectedCommand
+        changed = true
+      }
     }
   }
   if (changed) {

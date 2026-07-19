@@ -66,12 +66,13 @@ type ServicePreview = {
   role?: 'backend' | 'frontend' | 'service'
   cwd?: string
   start?: string
+  source?: 'package.json' | 'Cargo.toml' | 'compose'
 }
 
 type ProjectPreview = {
   path: string
   name: string
-  has_config: boolean
+  has_services: boolean
   error?: string | null
   services?: ServicePreview[]
 }
@@ -580,7 +581,7 @@ const recentImportable = computed(() =>
     .slice(0, 3)
 )
 const validSelectedFolders = computed(() =>
-  selectedFolders.value.filter((path) => projectPreviewMap[path]?.has_config)
+  selectedFolders.value.filter((path) => projectPreviewMap[path]?.has_services)
 )
 const projectsExpanded = ref(true)
 const activePortsExpanded = ref(true)
@@ -3436,7 +3437,7 @@ watch(
             <div class="flex shrink-0 items-start justify-between border-b border-[var(--border)] px-5 py-4">
               <div>
                 <h2 class="text-lg font-semibold text-[var(--text-strong)]">Add Projects</h2>
-                <p class="mt-0.5 text-xs text-[var(--text-subtle)]">Choose project roots containing a multiprise.json file.</p>
+                <p class="mt-0.5 text-xs text-[var(--text-subtle)]">Choose project folders. Multiprise discovers runnable services automatically.</p>
               </div>
               <button :class="btnPanelIcon" title="Close" @click="closePicker">
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -3462,7 +3463,7 @@ watch(
                     v-for="folder in selectedFolders"
                     :key="folder"
                     class="mb-2 rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-2.5 last:mb-0"
-                    :class="projectPreviewMap[folder]?.has_config ? '' : 'opacity-60'"
+                    :class="projectPreviewMap[folder]?.has_services ? '' : 'opacity-60'"
                   >
                     <div class="flex items-center justify-between gap-3">
                       <div class="min-w-0">
@@ -3476,19 +3477,21 @@ watch(
                       </button>
                     </div>
                     <div class="mt-2">
-                      <div v-if="projectPreviewMap[folder]?.has_config" class="flex flex-wrap gap-1.5">
+                      <div v-if="projectPreviewMap[folder]?.has_services" class="flex flex-wrap gap-1.5">
                         <span
                           v-for="service in projectPreviewMap[folder]?.services ?? []"
                           :key="`${folder}-${service.name}-${service.cwd ?? ''}`"
-                          class="inline-flex items-center rounded-md border border-[var(--border)] bg-[var(--panel-muted)] px-2 py-0.5 text-[11px] text-[var(--text-muted)]"
+                          class="inline-flex min-w-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel-muted)] px-2 py-1 text-[11px] text-[var(--text-muted)]"
+                          :title="service.start"
                         >
-                          {{ service.name }}
+                          <span class="font-medium text-[var(--text)]">{{ service.name }}</span>
+                          <span class="truncate font-mono text-[10px] text-[var(--text-subtle)]">{{ service.start }}</span>
                         </span>
                       </div>
                       <div v-else-if="projectPreviewMap[folder]?.error" class="text-xs text-[var(--warning-text)]">
                         {{ projectPreviewMap[folder]?.error }}
                       </div>
-                      <div v-else class="text-xs text-[var(--text-subtle)]">Checking configuration…</div>
+                      <div v-else class="text-xs text-[var(--text-subtle)]">Discovering services…</div>
                     </div>
                   </div>
               </div>
