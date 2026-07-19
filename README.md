@@ -1,51 +1,317 @@
-# Multiprise
+# multiprise
 
-Multiprise is a macOS desktop control center for developers working across multiple local projects. Track each project once, then launch services, assign collision-free ports, inspect processes, follow color-coded logs, and open running apps in tabbed browser views from one place.
+Multiprise is a macOS desktop control center for developers who run several local projects at once. It tracks projects, launches their services, assigns collision-free ports, captures logs, shows process ownership, and opens running apps in either the system browser or a tabbed in-app browser.
 
-## Features
+The name comes from the French word for a power strip: one place where many projects can be plugged in, observed, and unplugged.
 
-- Track parent project folders through `multiprise.json`.
-- Launch npm, Bun, Rust/Cargo, and manually controlled Docker services.
-- Allocate unused frontend and backend ports automatically.
-- Start complete projects or control services individually.
-- Inspect active ports, process ownership, PIDs, and external instances.
-- Search and filter color-coded service logs.
-- Browse running services in sandboxed tabs with navigation and docked DevTools.
-- Open projects in VS Code, with Finder as a fallback.
-- Light and dark themes.
+> Current release: `v0.1.0` for Apple Silicon macOS. The build is not yet signed or notarized for public distribution.
 
-## Development
+## Why It Exists
 
-Requirements: Node.js 20 or newer and macOS for Electron packaging.
+A normal multi-project development session quickly turns into terminal management:
+
+- remember which command starts each service;
+- avoid reusing ports such as `3000`, `5000`, or `5173`;
+- keep backend and frontend environment variables in sync;
+- find the terminal that owns a process when something must stop;
+- search through several streams of logs;
+- reopen the correct local URL after a restart.
+
+Multiprise turns that repeated setup into project configuration. A project is the parent folder selected by the user, and a root-level `multiprise.json` describes the services inside it.
+
+## How It Was Made
+
+### 1. Prove the workflow with a web prototype
+
+The first version was called VibeManager. It used a Vue frontend and a Rust/Axum backend. That prototype established the core product model:
+
+- track parent project folders;
+- detect frontend and backend services;
+- start and stop services independently or together;
+- find available ports;
+- stream and filter logs;
+- inspect running processes;
+- distinguish Multiprise-managed processes from external instances.
+
+It also exposed the central constraint: this is a local operating-system tool, not a conventional web application. It needs filesystem access, child-process control, native dialogs, external URL handling, and persistent local state.
+
+### 2. Rebuild it as an Electron application
+
+The Rust server was retired and the application was rebuilt around Electron. The current stack is:
+
+- **Electron** for the macOS window, native dialogs, child windows, embedded browser views, and OS integration;
+- **TypeScript + Express** for local orchestration and project APIs;
+- **Vue 3 Composition API** for the renderer;
+- **Tailwind CSS** for the interface;
+- **Vite** for renderer development and production builds;
+- **electron-builder** for the `.app`, `.dmg`, and `.zip` artifacts.
+
+Nuxt was intentionally left out. Multiprise does not need server-side rendering, routing conventions, or another runtime layer inside Electron.
+
+### 3. Define a portable project contract
+
+Automatic script detection was useful during prototyping, but projects differ too much for guesses to be dependable. Multiprise therefore requires a root-level `multiprise.json` file.
+
+The file declares each service's working directory, start command, and environment variables. Port placeholders are resolved immediately before launch:
+
+```json
+{
+  "services": [
+    {
+      "name": "backend",
+      "cwd": "backend",
+      "start": "npm run dev",
+      "env": {
+        "PORT": "{{BACKEND_PORT}}"
+      }
+    },
+    {
+      "name": "frontend",
+      "cwd": "frontend",
+      "start": "npm run dev",
+      "env": {
+        "FRONTEND_PORT": "{{FRONTEND_PORT}}",
+        "VITE_API_URL": "http://localhost:{{BACKEND_PORT}}"
+      }
+    }
+  ]
+}
+```
+
+This keeps application code portable: Multiprise injects configuration through environment variables instead of rewriting source files. The older `vibemanager.json` filename remains readable for backward compatibility.
+
+See [`MULTIPRISE_JSON.md`](./MULTIPRISE_JSON.md) for the complete schema and token reference.
+
+### 4. Build collision-free port assignment
+
+When automatic assignment is enabled, Multiprise scans the relevant range, rejects ports already owned by another listener, reserves an available port, and injects it into the service environment.
+
+The current defaults live in [`port-ranges.json`](./port-ranges.json):
+
+- frontend: `3000-4999` and `5100-5999`;
+- backend: `5000-5099` and `8000-8999`.
+
+The ranges deliberately avoid overlap. Manual mode is strict: the user must select a port, and launch fails clearly if that port is unavailable. Launching a whole project resolves backend and frontend ports together so both services receive `BACKEND_PORT`, `FRONTEND_PORT`, `PORT`, and any configured URL values consistently.
+
+### 5. Add process ownership and reliable shutdown
+
+Each launched service is stored with its project, command, port, PID, process group, and lifecycle state. Multiprise reads the machine's listening ports to show both managed and external processes.
+
+This distinction matters. If a developer started a service in another terminal, Multiprise should report an external instance rather than pretending it launched that process. Managed processes can be stopped as a group so child watchers do not remain headless after the parent command exits.
+
+Docker Compose definitions are shown separately and remain manually controlled. The project-level Launch action starts regular development services, not Docker services.
+
+### 6. Turn process output into usable logs
+
+Child-process `stdout` and `stderr` are captured by the TypeScript backend and sent to the renderer. Before display, Multiprise:
+
+- removes terminal control sequences;
+- handles progress-line rewrites produced by watch tools;
+- suppresses repeated identical lines;
+- associates every line with a project and service;
+- classifies common error, warning, backend, and frontend output;
+- keeps the log view pinned to the newest output unless the user scrolls away.
+
+The result is a searchable terminal-style log surface without the unreadable escape codes commonly produced by development servers.
+
+### 7. Design the renderer around the working session
+
+The interface went through several layouts before settling on three priorities:
+
+1. **Logs** are the main surface because they explain what a project is doing.
+2. **Services** provide compact launch, stop, URL, and port controls.
+3. **Processes** expose ownership and PIDs when deeper inspection is needed.
+
+The sidebar holds project search, tracked projects, active ports, and settings. Project rows show a small live state without repeating status labels. The home state focuses on adding or reopening projects, and every application launch starts there rather than restoring an accidental modal or detail view.
+
+The UI uses rounded, calm surfaces, an optional light or dark appearance, restrained animation, and a small electrical metaphor rather than turning every control into a plug or glowing status indicator.
+
+### 8. Add a tabbed in-app browser
+
+Running frontends can open in the system browser or inside Multiprise. The embedded browser uses Electron `WebContentsView` instances managed by the main process. The Vue renderer supplies tab controls for:
+
+- multiple local pages;
+- back and forward navigation;
+- reload;
+- address changes;
+- opening the current page externally;
+- docked DevTools.
+
+Embedded pages are sandboxed, context-isolated, and restricted to HTTP(S) navigation. This preserves the convenience of an integrated preview without giving project pages access to Multiprise's privileged bridge.
+
+### 9. Package state correctly for macOS
+
+Development data can live beside the source tree, but a packaged Electron application is stored in a read-only archive. The production build therefore points the backend at Electron's application-support directory before loading it.
+
+Local state is stored under:
+
+```text
+~/Library/Application Support/Multiprise/data/
+```
+
+That directory contains tracked projects and settings. It is intentionally excluded from Git and from release artifacts.
+
+The first packaged smoke test caught an important ordering bug: the backend module was imported before its writable data directory was configured, causing it to target the read-only application archive. Backend loading is now deferred until Electron has established `MULTIPRISE_DATA_DIR`.
+
+### 10. Publish the first release
+
+The source was cleaned of local state, generated builds, environment files, and retired prototype code before publication. `electron-builder` produces an Apple Silicon application bundle, DMG installer, and ZIP archive. Version `v0.1.0` is published as a private GitHub release while signing, notarization, and wider platform support are still pending.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    UI["Vue 3 renderer"] -->|"window.multiprise IPC"| Preload["Preload bridge"]
+    Preload --> Main["Electron main process"]
+    Main --> API["Local TypeScript orchestrator"]
+    API --> Config["multiprise.json"]
+    API --> Ports["Port scanner"]
+    API --> Processes["Child processes"]
+    Processes --> Logs["stdout and stderr"]
+    Logs --> API
+    Main --> Browser["Sandboxed WebContentsView tabs"]
+    Main --> Native["Dialogs, Finder, VS Code, system browser"]
+```
+
+The renderer never receives unrestricted Node.js access. Privileged operations cross the narrow bridge in [`preload.cjs`](./preload.cjs), while Electron lifecycle and native integration live in [`main.cjs`](./main.cjs).
+
+## Launch Flow
+
+When a user launches a project, Multiprise performs this sequence:
+
+1. Load and validate the project's `multiprise.json`.
+2. Separate regular services from Docker services.
+3. Inspect active listeners and managed process state.
+4. Allocate or validate one port per regular service.
+5. Resolve `{{PORT}}`, `{{BACKEND_PORT}}`, and `{{FRONTEND_PORT}}` tokens.
+6. Spawn each configured command in its declared working directory.
+7. Record PID, process group, port, project, and service ownership.
+8. Stream sanitized logs to the renderer.
+9. Refresh active ports and service state.
+10. Expose running URLs to the browser controls.
+
+## Project Structure
+
+```text
+multiprise/
+├── backend/
+│   ├── src/
+│   │   ├── server.ts            # Express routes and orchestration API
+│   │   ├── scanner.ts           # Project and runtime discovery
+│   │   ├── processes.ts         # Child-process lifecycle and logs
+│   │   ├── ports.ts             # Port inspection and allocation
+│   │   ├── store.ts             # Persistent project/settings storage
+│   │   └── multipriseconfig.ts  # Config loading and token resolution
+│   └── tsconfig.json
+├── renderer/
+│   ├── src/App.vue              # Main Vue application
+│   ├── src/style.css            # Tailwind layers and theme tokens
+│   └── vite.config.js
+├── scripts/dev.mjs              # Portable development launcher
+├── main.cjs                     # Electron main process
+├── preload.cjs                  # Context-isolated renderer bridge
+├── port-ranges.json             # Automatic allocation ranges
+├── MULTIPRISE_JSON.md           # Tracked-project configuration guide
+└── package.json                 # Development, build, and package scripts
+```
+
+## Supported Projects
+
+Multiprise can discover common project layouts and commands for:
+
+- npm;
+- pnpm;
+- Yarn;
+- Bun;
+- Rust/Cargo;
+- Docker Compose.
+
+Discovery helps explain what is present, but `multiprise.json` remains the source of truth for launch commands.
+
+## Run From Source
+
+### Requirements
+
+- macOS;
+- Node.js 20 or newer;
+- npm;
+- the runtimes required by the projects you plan to launch.
+
+### Install and launch
 
 ```bash
 npm install
 npm run dev
 ```
 
-The development launcher selects available backend and renderer ports automatically. Manual overrides remain available:
+The development launcher starts the local TypeScript orchestrator, Vite renderer, and Electron shell together. It picks free internal ports automatically.
+
+Explicit development ports are also supported:
 
 ```bash
 npm run dev -- --backend-port 4000 --frontend-port 5174
 ```
 
-## Build
+Explicit ports are strict. The command exits with a clear error if either requested port is unavailable or both values are the same.
+
+### Run individual development surfaces
+
+```bash
+npm run dev:api
+npm run dev:web
+npm run dev:electron
+```
+
+The combined `npm run dev` command is recommended because it coordinates startup order and environment variables.
+
+## Build and Package
+
+Build the TypeScript backend and Vue renderer:
 
 ```bash
 npm run build:api
 npm run build:web
 ```
 
-Create the macOS `.app`, `.dmg`, and `.zip` artifacts:
+Create the macOS app, DMG, and ZIP:
 
 ```bash
 npm run package:mac
 ```
 
-Artifacts are written to `release/`.
+Artifacts are written to `release/`. The current package target is Apple Silicon (`arm64`).
 
-## Project Configuration
+## Security and Privacy
 
-Tracked projects declare their services in a `multiprise.json` file at the project root. See [`MULTIPRISE_JSON.md`](./MULTIPRISE_JSON.md) for the complete format and supported environment tokens.
+- Multiprise is local-first; tracked project data is stored on the machine.
+- The orchestration server binds to `127.0.0.1`, not the public network interface.
+- The renderer uses context isolation instead of direct Node.js access.
+- Embedded browser pages are sandboxed and limited to HTTP(S).
+- Personal project paths, settings, logs, and generated release files are excluded from Git.
+- Commands in `multiprise.json` are trusted local project instructions. Review a project's config before launching an unfamiliar repository.
 
-Existing `vibemanager.json` files remain readable for backward compatibility, but new projects should use `multiprise.json`.
+## Current Limitations
+
+- The packaged release currently targets Apple Silicon macOS only.
+- The app is not signed or notarized, so macOS may require an explicit first-open approval.
+- Windows and Linux packaging have not been implemented.
+- Resource graphs and historical metrics are not part of the first release.
+- Project configuration is JSON rather than a graphical editor.
+
+## Lessons From the Build
+
+- A local orchestration tool benefits from a desktop shell more than a browser-first architecture.
+- Environment injection is more portable than rewriting each project's code or config files.
+- Port ownership and process ownership are different facts and must be modeled separately.
+- Stopping a command is not enough when development tools create child watchers; process groups matter.
+- Packaged Electron apps need an explicit writable data path established before backend initialization.
+- Logs are the highest-value surface, so visual hierarchy should favor them over dashboards and decorative statistics.
+- Product features should earn their complexity: an early workspace abstraction was removed when direct project launch proved simpler.
+
+## Roadmap
+
+Future work is tracked in [`upcoming-features.md`](./upcoming-features.md). Likely next steps include signed releases, additional operating systems, richer runtime support, and deeper browser/session controls.
+
+## License
+
+No open-source license has been selected yet. Until one is added, the source remains copyright-protected by default.
