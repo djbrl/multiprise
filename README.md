@@ -114,16 +114,17 @@ The UI uses rounded, calm surfaces, an optional light or dark appearance, restra
 
 ### 8. Add a tabbed in-app browser
 
-Running frontends can open in the system browser or inside Multiprise. The embedded browser uses Electron `WebContentsView` instances managed by the main process. The Vue renderer supplies tab controls for:
+Running frontends can open in the system browser or inside Multiprise. The embedded browser shares the project’s main focus panel with Logs, so switching between output and a live page does not leave the project workspace. Electron `WebContentsView` instances are managed by the main process while the Vue renderer supplies tab controls for:
 
 - multiple local pages;
 - back and forward navigation;
 - reload;
 - address changes;
 - opening the current page externally;
-- docked DevTools.
+- docked DevTools;
+- detaching a live tab into its own controlled Multiprise window and attaching the same view back without reloading it.
 
-Embedded pages are sandboxed, context-isolated, and restricted to HTTP(S) navigation. This preserves the convenience of an integrated preview without giving project pages access to Multiprise's privileged bridge.
+Service URL actions use main-process IPC for reliable clipboard writes and system-browser opening from sandboxed renderer builds. Embedded pages are sandboxed, context-isolated, and restricted to HTTP(S) navigation. This preserves the convenience of an integrated preview without giving project pages access to Multiprise's privileged bridge.
 
 ### 9. Package state correctly for macOS
 

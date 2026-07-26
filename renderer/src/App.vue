@@ -228,15 +228,10 @@ async function apiFetch(path: string, options?: RequestInit) {
 }
 
 async function openExternal(url: string) {
-  if (window.vibe?.openExternal) {
-    try {
-      await window.vibe.openExternal(url)
-      return
-    } catch (err) {
-      // fall through
-    }
+  if (!window.vibe?.openExternal) {
+    throw new Error('System browser integration is unavailable.')
   }
-  window.open(url, '_blank')
+  await window.vibe.openExternal(url)
 }
 
 
@@ -255,10 +250,14 @@ function applyBrowserState(state?: BrowserState | null) {
 async function browserAction(action: string, payload?: Record<string, unknown>) {
   const state = await window.vibe?.browser?.action(action, payload)
   applyBrowserState(state)
+  if (['new', 'activate', 'attach'].includes(action) && projectPanelMode.value === 'browser') {
+    await nextTick()
+    observeBrowserViewport()
+  }
 }
 
 async function syncBrowserBounds() {
-  if (activeSection.value !== 'browser' || !browserViewportRef.value) return
+  if (activeSection.value !== 'projects' || projectPanelMode.value !== 'browser' || !browserViewportRef.value) return
   const rect = browserViewportRef.value.getBoundingClientRect()
   if (rect.width < 1 || rect.height < 1) return
   const state = await window.vibe?.browser?.setBounds({
@@ -281,7 +280,8 @@ function observeBrowserViewport() {
 async function openInAppBrowser(item: ProjectView) {
   const url = projectUrl(item)
   if (!url || !window.vibe?.browser) return
-  activeSection.value = 'browser'
+  activeSection.value = 'projects'
+  projectPanelMode.value = 'browser'
   const state = await window.vibe.browser.open(url, { title: `${projectTitle(item)} · ${item.project.name}` })
   applyBrowserState(state)
   await nextTick()
@@ -289,7 +289,8 @@ async function openInAppBrowser(item: ProjectView) {
 }
 
 async function activateBrowserTab(id: string) {
-  activeSection.value = 'browser'
+  activeSection.value = 'projects'
+  projectPanelMode.value = 'browser'
   await browserAction('activate', { id })
   await nextTick()
   observeBrowserViewport()
@@ -298,7 +299,7 @@ async function activateBrowserTab(id: string) {
 async function closeBrowserTab(id: string) {
   await browserAction('close', { id })
   if (!browserState.value.tabs.length) {
-    activeSection.value = selectedGroupKey.value ? 'projects' : 'home'
+    projectPanelMode.value = 'logs'
   }
 }
 
@@ -307,6 +308,16 @@ async function navigateBrowser() {
   if (!value) return
   browserAddressEditing.value = false
   await browserAction('navigate', { url: value })
+}
+
+async function toggleBrowserAttachment() {
+  const tab = activeBrowserTab.value
+  if (!tab) return
+  await browserAction(tab.detached ? 'attach' : 'detach', { id: tab.id })
+  if (tab.detached) {
+    await nextTick()
+    observeBrowserViewport()
+  }
 }
 
 
@@ -586,7 +597,8 @@ const npmServices = computed(() =>
 const dockerServices = computed(() =>
   selectedGroup.value ? selectedGroup.value.items.filter((item) => isDockerService(item)) : []
 )
-const activeSection = ref<'home' | 'projects' | 'browser' | 'settings'>('home')
+const activeSection = ref<'home' | 'projects' | 'settings'>('home')
+const projectPanelMode = ref<'logs' | 'browser'>('logs')
 const restoreProjectOnLoad = ref(false)
 const browserState = ref<BrowserState>({ activeTabId: null, visible: false, tabs: [] })
 const browserAddress = ref('')
@@ -826,21 +838,22 @@ function projectUrl(item: ProjectView) {
   return `http://localhost:${port}`
 }
 
-function openProjectUrl(item: ProjectView) {
+async function openProjectUrl(item: ProjectView) {
   const url = projectUrl(item)
   if (!url) return
-  openExternal(url)
+  try {
+    await openExternal(url)
+  } catch (err) {
+    setActionError(item.project.id, err instanceof Error ? err.message : 'Unable to open link')
+  }
 }
 
 async function copyProjectUrl(item: ProjectView) {
   const url = projectUrl(item)
   if (!url) return
   try {
-    if (window.vibe?.copyText) {
-      window.vibe.copyText(url)
-    } else {
-      await navigator.clipboard.writeText(url)
-    }
+    if (!window.vibe?.copyText) throw new Error('Clipboard integration is unavailable.')
+    await window.vibe.copyText(url)
     copiedServiceUrlId.value = item.project.id
     if (copiedServiceUrlTimer) window.clearTimeout(copiedServiceUrlTimer)
     copiedServiceUrlTimer = window.setTimeout(() => {
@@ -2380,21 +2393,27 @@ async function saveSettings() {
 }
 
 watch(activeSection, async (section) => {
-  if (section !== 'settings') {
-    syncSettingsDraftFromSettings()
-  }
-  if (section === 'browser') {
-    await nextTick()
-    observeBrowserViewport()
-  } else {
+  if (section !== 'settings') syncSettingsDraftFromSettings()
+})
+
+watch(
+  [activeSection, projectPanelMode, selectedGroupKey, () => activeBrowserTab.value?.detached],
+  async ([section, panelMode]) => {
+    const shouldAttachView = section === 'projects' && panelMode === 'browser' && !!selectedGroupKey.value && !activeBrowserTab.value?.detached
+    if (shouldAttachView) {
+      await nextTick()
+      observeBrowserViewport()
+      return
+    }
     browserResizeObserver?.disconnect()
     const state = await window.vibe?.browser?.hide()
     applyBrowserState(state)
   }
-})
+)
 
-watch(selectedGroupKey, async (key) => {
+watch(selectedGroupKey, async (key, previousKey) => {
   saveSelectedGroupToStorage(key)
+  if (key !== previousKey) projectPanelMode.value = 'logs'
   if (!key) return
   logsPinnedToBottom.value = true
   await refreshSelectedLogs()
@@ -2670,16 +2689,6 @@ watch(
             </div>
           </transition>
           <div class="mt-auto space-y-1 pt-2">
-            <button
-              v-if="browserState.tabs.length"
-              class="flex h-10 w-full items-center justify-between rounded-lg px-3 text-left text-[13px] font-medium transition-colors hover:bg-[var(--hover)]"
-              :class="activeSection === 'browser' ? 'bg-[var(--selection)] text-[var(--text-strong)]' : 'text-[var(--text-muted)]'"
-              @click="activeSection = 'browser'"
-              title="Browser"
-            >
-              <span>Browser</span>
-              <span v-if="!sidebarCollapsed" class="text-[10px] text-[var(--text-subtle)]">{{ browserState.tabs.length }}</span>
-            </button>
             <button
               class="flex h-10 w-full items-center rounded-lg px-3 text-left text-[13px] font-medium transition-colors hover:bg-[var(--hover)]"
               :class="activeSection === 'settings' ? 'bg-[var(--selection)] text-[var(--text-strong)]' : 'text-[var(--text-muted)]'"
@@ -3079,6 +3088,16 @@ watch(
                                     </svg>
                                   </button>
                                   <button
+                                    class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#343434] text-white transition-colors hover:bg-[#252525]"
+                                    title="Open in system browser"
+                                    aria-label="Open link in system browser"
+                                    @click="openProjectUrl(service)"
+                                  >
+                                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.7">
+                                      <path d="M5 12h13M13 7l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                  </button>
+                                  <button
                                     class="inline-flex h-7 items-center justify-center rounded-md bg-[var(--ghost-bg)] px-2 text-[10px] font-medium text-[var(--ghost-text)] transition-colors hover:bg-[var(--ghost-hover)]"
                                     title="Open in Multiprise"
                                     @click="openInAppBrowser(service)"
@@ -3177,156 +3196,153 @@ watch(
 
                     <div class="flex h-full min-h-0 flex-col p-4">
                       <div class="focus-panel relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-[#343434] p-4">
-                        <div class="relative flex items-start justify-between gap-3">
-                          <div class="flex items-center gap-2">
-                            <svg viewBox="0 0 24 24" class="h-4 w-4 text-[var(--text-subtle)]" fill="none" stroke="currentColor" stroke-width="1.5">
-                              <path d="M4 6h16v12H4z" stroke-linecap="round" stroke-linejoin="round" />
-                              <path d="M7 10l3 3-3 3" stroke-linecap="round" stroke-linejoin="round" />
-                              <path d="M13 16h4" stroke-linecap="round" stroke-linejoin="round" />
-                            </svg>
-                            <div>
-                              <p class="text-[15px] font-semibold text-[var(--text-strong)]">Logs</p>
-                            </div>
-                          </div>
-                          <span class="text-[11px] text-[var(--text-subtle)]">{{ selectedLogLines.length }} lines</span>
-                        </div>
-                        <div class="mt-3 flex flex-wrap items-center gap-1.5">
-                          <input
-                            v-model="logFilter"
-                            :class="[inputBase, 'h-8 w-full py-1.5 text-xs sm:w-auto sm:flex-1']"
-                            placeholder="Search logs"
-                          />
-                          <button
-                            class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                            :class="logRoleFilter === 'all' && logLevelFilter === 'all' ? 'border-[var(--text-muted)] bg-[var(--chip-active-bg)] text-[var(--text-strong)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                            @click="logRoleFilter = 'all'; logLevelFilter = 'all'"
-                          >
-                            All
-                          </button>
-                          <button
-                            class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                            :class="logLevelFilter === 'errors' ? 'border-[var(--log-error)] bg-[var(--danger-bg)] text-[var(--log-error)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                            @click="logLevelFilter = logLevelFilter === 'errors' ? 'all' : 'errors'"
-                          >
-                            Errors
-                          </button>
-                          <button
-                            class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                            :class="logLevelFilter === 'warnings' ? 'border-[var(--log-warning)] text-[var(--log-warning)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                            @click="logLevelFilter = logLevelFilter === 'warnings' ? 'all' : 'warnings'"
-                          >
-                            Warnings
-                          </button>
-                          <button
-                            class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                            :class="logRoleFilter === 'backend' ? 'border-[var(--log-backend)] text-[var(--log-backend)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                            @click="logRoleFilter = logRoleFilter === 'backend' ? 'all' : 'backend'"
-                          >
-                            Backend
-                          </button>
-                          <button
-                            class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                            :class="logRoleFilter === 'frontend' ? 'border-[var(--log-frontend)] text-[var(--log-frontend)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                            @click="logRoleFilter = logRoleFilter === 'frontend' ? 'all' : 'frontend'"
-                          >
-                            Frontend
-                          </button>
-                        </div>
-                        <div class="relative mt-3 flex-1 min-h-0">
-                          <div
-                            ref="logsScrollRef"
-                            class="relative h-full min-h-0 overflow-y-auto rounded-xl bg-[var(--log-bg)] px-2 py-2.5 font-mono text-[11px] leading-[1.55]"
-                            :class="noScrollbar"
-                            @scroll="handleLogsScroll"
-                          >
-                          <div v-if="selectedLogLines.length === 0" class="flex h-full min-h-[220px] items-center justify-center">
-                            <svg viewBox="0 0 48 48" class="h-9 w-9 text-[var(--text-subtle)] opacity-55" fill="none" stroke="currentColor" stroke-width="1.5">
-                              <path d="M16 8v10M30 8v10M12 18h22v4c0 7-5 12-11 12v7" stroke-linecap="round" stroke-linejoin="round" />
-                              <path d="M34 34l7 7M41 34l-7 7" stroke-linecap="round" />
-                            </svg>
-                          </div>
-                          <div
-                            v-for="entry in selectedLogLines"
-                            :key="`${entry.timestamp}-${entry.serviceName}-${entry.line}`"
-                            class="flex min-w-0 gap-2 border-l-2 px-2 py-0.5"
-                            :class="logRowTone(entry)"
-                          >
-                            <span class="w-[58px] shrink-0 text-[10px] text-[var(--text-subtle)]">{{ formatTime(entry.timestamp) }}</span>
-                            <span
-                              class="w-[58px] shrink-0 truncate text-[10px] font-semibold"
-                              :class="logServiceTone(entry)"
+                        <div class="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 pb-3">
+                          <div class="flex items-center rounded-lg bg-black/15 p-1" role="tablist" aria-label="Project output">
+                            <button
+                              class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
+                              :class="projectPanelMode === 'logs' ? 'bg-white/12 text-white' : 'text-white/55 hover:text-white'"
+                              @click="projectPanelMode = 'logs'"
                             >
-                              {{ entry.serviceName }}
-                            </span>
-                            <span class="min-w-0 flex-1 whitespace-pre-wrap break-words" :class="logLineTone(entry)" v-html="highlightText(entry.line, logFilter)"></span>
+                              Logs
+                            </button>
+                            <button
+                              class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
+                              :class="projectPanelMode === 'browser' ? 'bg-white/12 text-white' : 'text-white/55 hover:text-white'"
+                              @click="projectPanelMode = 'browser'"
+                            >
+                              Browser
+                              <span v-if="browserState.tabs.length" class="rounded bg-white/10 px-1.5 py-0.5 text-[9px] text-white/70">{{ browserState.tabs.length }}</span>
+                            </button>
                           </div>
-                          </div>
-                          <button
-                            v-if="!logsPinnedToBottom"
-                            class="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-1.5 text-[11px] text-[var(--text)] shadow-lg hover:bg-[var(--hover)]"
-                            @click="jumpToLatest"
-                          >
-                            Jump to latest
-                          </button>
+                          <span v-if="projectPanelMode === 'logs'" class="text-[11px] text-white/45">{{ selectedLogLines.length }} lines</span>
+                          <span v-else-if="activeBrowserTab?.detached" class="text-[11px] text-white/45">Detached window</span>
                         </div>
+
+                        <template v-if="projectPanelMode === 'logs'">
+                          <div class="mt-3 flex flex-wrap items-center gap-1.5">
+                            <input
+                              v-model="logFilter"
+                              :class="[inputBase, 'h-8 w-full py-1.5 text-xs sm:w-auto sm:flex-1']"
+                              placeholder="Search logs"
+                            />
+                            <button
+                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+                              :class="logRoleFilter === 'all' && logLevelFilter === 'all' ? 'border-[var(--text-muted)] bg-[var(--chip-active-bg)] text-[var(--text-strong)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
+                              @click="logRoleFilter = 'all'; logLevelFilter = 'all'"
+                            >All</button>
+                            <button
+                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+                              :class="logLevelFilter === 'errors' ? 'border-[var(--log-error)] bg-[var(--danger-bg)] text-[var(--log-error)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
+                              @click="logLevelFilter = logLevelFilter === 'errors' ? 'all' : 'errors'"
+                            >Errors</button>
+                            <button
+                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+                              :class="logLevelFilter === 'warnings' ? 'border-[var(--log-warning)] text-[var(--log-warning)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
+                              @click="logLevelFilter = logLevelFilter === 'warnings' ? 'all' : 'warnings'"
+                            >Warnings</button>
+                            <button
+                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+                              :class="logRoleFilter === 'backend' ? 'border-[var(--log-backend)] text-[var(--log-backend)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
+                              @click="logRoleFilter = logRoleFilter === 'backend' ? 'all' : 'backend'"
+                            >Backend</button>
+                            <button
+                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+                              :class="logRoleFilter === 'frontend' ? 'border-[var(--log-frontend)] text-[var(--log-frontend)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
+                              @click="logRoleFilter = logRoleFilter === 'frontend' ? 'all' : 'frontend'"
+                            >Frontend</button>
+                          </div>
+                          <div class="relative mt-3 flex-1 min-h-0">
+                            <div
+                              ref="logsScrollRef"
+                              class="relative h-full min-h-0 overflow-y-auto rounded-xl bg-[var(--log-bg)] px-2 py-2.5 font-mono text-[11px] leading-[1.55]"
+                              :class="noScrollbar"
+                              @scroll="handleLogsScroll"
+                            >
+                              <div v-if="selectedLogLines.length === 0" class="flex h-full min-h-[220px] items-center justify-center">
+                                <svg viewBox="0 0 48 48" class="h-9 w-9 text-[var(--text-subtle)] opacity-55" fill="none" stroke="currentColor" stroke-width="1.5">
+                                  <path d="M16 8v10M30 8v10M12 18h22v4c0 7-5 12-11 12v7" stroke-linecap="round" stroke-linejoin="round" />
+                                  <path d="M34 34l7 7M41 34l-7 7" stroke-linecap="round" />
+                                </svg>
+                              </div>
+                              <div
+                                v-for="entry in selectedLogLines"
+                                :key="`${entry.timestamp}-${entry.serviceName}-${entry.line}`"
+                                class="flex min-w-0 gap-2 border-l-2 px-2 py-0.5"
+                                :class="logRowTone(entry)"
+                              >
+                                <span class="w-[58px] shrink-0 text-[10px] text-[var(--text-subtle)]">{{ formatTime(entry.timestamp) }}</span>
+                                <span class="w-[58px] shrink-0 truncate text-[10px] font-semibold" :class="logServiceTone(entry)">{{ entry.serviceName }}</span>
+                                <span class="min-w-0 flex-1 whitespace-pre-wrap break-words" :class="logLineTone(entry)" v-html="highlightText(entry.line, logFilter)"></span>
+                              </div>
+                            </div>
+                            <button
+                              v-if="!logsPinnedToBottom"
+                              class="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-1.5 text-[11px] text-[var(--text)] shadow-lg hover:bg-[var(--hover)]"
+                              @click="jumpToLatest"
+                            >Jump to latest</button>
+                          </div>
+                        </template>
+
+                        <template v-else>
+                          <div class="mt-3 flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b border-white/10 px-1" :class="noScrollbar">
+                            <button
+                              v-for="tab in browserState.tabs"
+                              :key="tab.id"
+                              class="group flex h-8 min-w-[130px] max-w-[190px] items-center gap-2 rounded-t-lg px-2.5 text-left text-[11px] transition-colors"
+                              :class="tab.id === browserState.activeTabId ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5 hover:text-white/80'"
+                              @click="activateBrowserTab(tab.id)"
+                            >
+                              <span v-if="tab.loading" :class="[spinnerClass, '!h-3 !w-3 !border']" aria-hidden="true"></span>
+                              <span v-else class="h-1.5 w-1.5 shrink-0 rounded-full" :class="tab.error ? 'bg-[var(--log-error)]' : tab.detached ? 'bg-white/35' : 'bg-[var(--live)]'"></span>
+                              <span class="min-w-0 flex-1 truncate">{{ tab.title || tab.url || 'New tab' }}</span>
+                              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100" title="Close tab" @click.stop="closeBrowserTab(tab.id)">×</span>
+                            </button>
+                            <button class="mb-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-lg text-white/50 hover:bg-white/10 hover:text-white" title="New tab" @click="browserAction('new')">+</button>
+                          </div>
+
+                          <div v-if="activeBrowserTab" class="flex h-11 shrink-0 items-center gap-1.5 border-b border-white/10 py-1.5">
+                            <button :class="btnPanelIcon" :disabled="!activeBrowserTab.canGoBack" title="Back" @click="browserAction('back')">
+                              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                            </button>
+                            <button :class="btnPanelIcon" :disabled="!activeBrowserTab.canGoForward" title="Forward" @click="browserAction('forward')">
+                              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                            </button>
+                            <button :class="btnPanelIcon" :title="activeBrowserTab.loading ? 'Stop loading' : 'Reload'" @click="browserAction('reload')">
+                              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M19 8a8 8 0 10.5 7M19 4v4h-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                            </button>
+                            <form class="min-w-0 flex-1" @submit.prevent="navigateBrowser">
+                              <input
+                                v-model="browserAddress"
+                                class="h-8 w-full rounded-lg border border-white/15 bg-black/20 px-3 font-mono text-[11px] text-white placeholder:text-white/35 focus:border-[var(--primary)] focus:outline-none"
+                                placeholder="Enter a local URL"
+                                @focus="browserAddressEditing = true"
+                                @blur="browserAddressEditing = false"
+                              />
+                            </form>
+                            <button :class="btnPanelIcon" :disabled="!activeBrowserTab.url" title="Open in system browser" @click="browserAction('external')">
+                              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 5h5v5M19 5l-9 9" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 13v5a1 1 0 01-1 1H6a1 1 0 01-1-1V8a1 1 0 011-1h5" stroke-linecap="round"/></svg>
+                            </button>
+                            <button :class="btnPanelSecondary" title="Toggle developer tools" @click="browserAction('devtools')">DevTools</button>
+                            <button :class="btnPanelSecondary" :title="activeBrowserTab.detached ? 'Bring this page back into Multiprise' : 'Open this page in its own Multiprise window'" @click="toggleBrowserAttachment">
+                              {{ activeBrowserTab.detached ? 'Attach' : 'Detach' }}
+                            </button>
+                          </div>
+
+                          <div v-if="!browserState.tabs.length" class="flex min-h-0 flex-1 items-center justify-center text-sm text-white/40">
+                            Open a running service here to create a browser tab.
+                          </div>
+                          <div v-else-if="activeBrowserTab?.detached" class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-center text-white/45">
+                            <p class="text-sm text-white/70">This page is open in a detached window.</p>
+                            <button :class="btnPanelSecondary" @click="toggleBrowserAttachment">Attach to this panel</button>
+                          </div>
+                          <div v-else ref="browserViewportRef" class="min-h-0 flex-1 rounded-b-xl bg-white"></div>
+                        </template>
                       </div>
                     </div>
                   </div>
                 </div>
                 </div>
               </transition>
-            </div>
-          </div>
-
-          <div v-else-if="activeSection === 'browser'" class="h-full min-h-0">
-            <div class="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl" :class="panelProjectClass">
-              <div class="flex h-11 shrink-0 items-end gap-1 overflow-x-auto border-b border-[var(--border)] px-3" :class="noScrollbar">
-                <button
-                  v-for="tab in browserState.tabs"
-                  :key="tab.id"
-                  class="group flex h-9 min-w-[150px] max-w-[220px] items-center gap-2 rounded-t-lg px-3 text-left text-xs transition-colors"
-                  :class="tab.id === browserState.activeTabId ? 'bg-[var(--panel-muted)] text-[var(--text-strong)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                  @click="activateBrowserTab(tab.id)"
-                >
-                  <span v-if="tab.loading" :class="[spinnerClass, '!h-3 !w-3 !border']" aria-hidden="true"></span>
-                  <span v-else class="h-2 w-2 shrink-0 rounded-full" :class="tab.error ? 'bg-[var(--warning-text)]' : 'bg-[var(--live)]'"></span>
-                  <span class="min-w-0 flex-1 truncate">{{ tab.title || tab.url || 'New tab' }}</span>
-                  <span
-                    class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--text-subtle)] opacity-0 transition-opacity hover:bg-[var(--hover)] group-hover:opacity-100"
-                    title="Close tab"
-                    @click.stop="closeBrowserTab(tab.id)"
-                  >×</span>
-                </button>
-                <button class="mb-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-lg text-[var(--text-muted)] hover:bg-[var(--hover)]" title="New tab" @click="browserAction('new')">+</button>
-              </div>
-
-              <div class="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
-                <button :class="btnPanelIcon" :disabled="!activeBrowserTab?.canGoBack" title="Back" @click="browserAction('back')">
-                  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                </button>
-                <button :class="btnPanelIcon" :disabled="!activeBrowserTab?.canGoForward" title="Forward" @click="browserAction('forward')">
-                  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                </button>
-                <button :class="btnPanelIcon" :title="activeBrowserTab?.loading ? 'Stop loading' : 'Reload'" @click="browserAction('reload')">
-                  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M19 8a8 8 0 10.5 7M19 4v4h-4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                </button>
-                <form class="min-w-0 flex-1" @submit.prevent="navigateBrowser">
-                  <input
-                    v-model="browserAddress"
-                    class="h-8 w-full rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] px-3 font-mono text-xs text-[var(--input-text)] placeholder:text-[var(--input-placeholder)] focus:border-[var(--primary)] focus:outline-none"
-                    placeholder="Enter a local URL"
-                    @focus="browserAddressEditing = true"
-                    @blur="browserAddressEditing = false"
-                  />
-                </form>
-                <button :class="btnPanelSecondary" :disabled="!activeBrowserTab?.url" title="Open in system browser" @click="browserAction('external')">Open externally</button>
-                <button :class="btnPanelSecondary" :disabled="!activeBrowserTab" title="Toggle developer tools" @click="browserAction('devtools')">DevTools</button>
-              </div>
-
-              <div v-if="!browserState.tabs.length" class="flex min-h-0 flex-1 items-center justify-center text-sm text-[var(--text-subtle)]">
-                Open a running service to start browsing.
-              </div>
-              <div v-else ref="browserViewportRef" class="min-h-0 flex-1 bg-white"></div>
             </div>
           </div>
 

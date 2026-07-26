@@ -1,10 +1,10 @@
-const { clipboard, contextBridge, ipcRenderer, shell } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('vibe', {
   ping: () => ipcRenderer.invoke('ping'),
   backendHealth: () => ipcRenderer.invoke('backend:health'),
-  openExternal: (url) => shell.openExternal(url),
-  copyText: (text) => clipboard.writeText(String(text)),
+  openExternal: (url) => ipcRenderer.invoke('external:open', url),
+  copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
   browser: {
     open: (url, options) => ipcRenderer.invoke('browser:open', url, options),
     getState: () => ipcRenderer.invoke('browser:state'),

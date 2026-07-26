@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, WebContentsView, clipboard, ipcMain, shell } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -211,6 +211,7 @@ const normalizeBrowserUrl = (value, allowBlank = false) => {
 };
 
 const activeBrowserTab = () => browserTabs.find((tab) => tab.id === activeBrowserTabId) || null;
+const browserTabById = (id) => browserTabs.find((tab) => tab.id === id) || null;
 
 const browserState = () => ({
   activeTabId: activeBrowserTabId,
@@ -221,31 +222,57 @@ const browserState = () => ({
     url: tab.url === 'about:blank' ? '' : tab.url,
     loading: tab.loading,
     error: tab.error || null,
-    canGoBack: tab.view.webContents.canGoBack(),
-    canGoForward: tab.view.webContents.canGoForward()
+    detached: Boolean(tab.detachedWindow && !tab.detachedWindow.isDestroyed()),
+    canGoBack: tab.view.webContents.navigationHistory.canGoBack(),
+    canGoForward: tab.view.webContents.navigationHistory.canGoForward()
   }))
 });
 
 const sendBrowserState = () => {
+  const state = browserState();
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('browser:state', browserState());
+    mainWindow.webContents.send('browser:state', state);
   }
+  browserTabs.forEach((tab) => {
+    if (tab.detachedWindow && !tab.detachedWindow.isDestroyed()) {
+      tab.detachedWindow.webContents.send('browser:state', state);
+    }
+  });
 };
 
-const removeBrowserView = (view) => {
+const removeBrowserViewFromMain = (view) => {
   if (!mainWindow || mainWindow.isDestroyed() || !view) return;
   try {
     mainWindow.contentView.removeChildView(view);
   } catch (err) {
-    // The view may already be detached.
+    // The view may already have another owner.
   }
+};
+
+const removeBrowserViewFromDetachedWindow = (tab) => {
+  if (!tab?.detachedWindow || tab.detachedWindow.isDestroyed()) return;
+  try {
+    tab.detachedWindow.contentView.removeChildView(tab.view);
+  } catch (err) {
+    // The view may already be attached to the main window.
+  }
+};
+
+const syncDetachedBrowserBounds = (tab) => {
+  if (!tab?.detachedWindow || tab.detachedWindow.isDestroyed()) return;
+  const [width, height] = tab.detachedWindow.getContentSize();
+  tab.view.setBounds({ x: 0, y: 52, width: Math.max(0, width), height: Math.max(0, height - 52) });
 };
 
 const syncActiveBrowserView = () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  browserTabs.forEach((tab) => removeBrowserView(tab.view));
+  browserTabs.forEach((tab) => {
+    if (!tab.detachedWindow || tab.detachedWindow.isDestroyed()) {
+      removeBrowserViewFromMain(tab.view);
+    }
+  });
   const tab = activeBrowserTab();
-  if (!browserVisible || !browserBounds || !tab) return;
+  if (!browserVisible || !browserBounds || !tab || (tab.detachedWindow && !tab.detachedWindow.isDestroyed())) return;
   mainWindow.contentView.addChildView(tab.view);
   tab.view.setBounds(browserBounds);
 };
@@ -255,6 +282,9 @@ const updateBrowserTab = (tab) => {
   const loadedUrl = tab.view.webContents.getURL();
   tab.url = loadedUrl || tab.url;
   tab.title = tab.view.webContents.getTitle() || tab.title || 'New tab';
+  if (tab.detachedWindow && !tab.detachedWindow.isDestroyed()) {
+    tab.detachedWindow.setTitle(tab.title || 'Multiprise browser');
+  }
   sendBrowserState();
 };
 
@@ -278,7 +308,7 @@ const wireBrowserTab = (tab) => {
   contents.on('page-title-updated', (event, title) => {
     event.preventDefault();
     tab.title = title || tab.title;
-    sendBrowserState();
+    updateBrowserTab(tab);
   });
   contents.on('did-fail-load', (_event, code, description, validatedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return;
@@ -289,12 +319,107 @@ const wireBrowserTab = (tab) => {
   });
 };
 
+const detachedBrowserShell = (tabId) => `<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{color-scheme:dark}*{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:#242424;color:#f5f5f5;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .bar{height:52px;display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid #3d3d3d;background:#292929}
+  button{height:32px;border:0;border-radius:8px;background:#383838;color:#eee;padding:0 10px;cursor:pointer}button:hover{background:#464646}button:disabled{opacity:.4;cursor:default}
+  .icon{width:32px;padding:0;font-size:16px}.address{min-width:0;flex:1;height:32px;border:1px solid #484848;border-radius:8px;background:#1d1d1d;color:#fff;padding:0 11px;outline:none}.address:focus{border-color:#f97316}
+  .attach{background:#f97316;color:#fff;font-weight:600}.attach:hover{background:#ea580c}
+</style></head><body><div class="bar">
+<button id="back" class="icon" title="Back">‹</button><button id="forward" class="icon" title="Forward">›</button><button id="reload" class="icon" title="Reload">↻</button>
+<form id="form" style="display:flex;min-width:0;flex:1"><input id="address" class="address" placeholder="Enter a local URL"></form>
+<button id="external" title="Open in system browser">External</button><button id="devtools" title="Toggle developer tools">DevTools</button><button id="attach" class="attach">Attach</button>
+</div><script>
+const tabId=${JSON.stringify(tabId)};let tab=null;
+const back=document.getElementById('back'),forward=document.getElementById('forward'),reload=document.getElementById('reload'),form=document.getElementById('form'),address=document.getElementById('address'),external=document.getElementById('external'),devtools=document.getElementById('devtools'),attach=document.getElementById('attach');
+const action=(name,payload={})=>window.vibe.browser.action(name,{id:tabId,...payload});
+const render=(state)=>{tab=state.tabs.find((item)=>item.id===tabId)||null;if(!tab)return;document.title=tab.title||'Multiprise browser';if(document.activeElement!==address)address.value=tab.url||'';back.disabled=!tab.canGoBack;forward.disabled=!tab.canGoForward;reload.textContent=tab.loading?'×':'↻';};
+window.vibe.browser.getState().then(render);window.vibe.browser.onState(render);
+back.onclick=()=>action('back');forward.onclick=()=>action('forward');reload.onclick=()=>action('reload');external.onclick=()=>action('external');devtools.onclick=()=>action('devtools');attach.onclick=()=>action('attach');
+form.onsubmit=(event)=>{event.preventDefault();action('navigate',{url:address.value});};
+</script></body></html>`;
+
+const attachBrowserTab = (id, options = {}) => {
+  const tab = browserTabById(id);
+  if (!tab) return browserState();
+  const detachedWindow = tab.detachedWindow;
+  if (detachedWindow && !detachedWindow.isDestroyed()) {
+    removeBrowserViewFromDetachedWindow(tab);
+    tab.closingDetachedWindow = true;
+    detachedWindow.destroy();
+  }
+  tab.detachedWindow = null;
+  tab.closingDetachedWindow = false;
+  activeBrowserTabId = tab.id;
+  browserVisible = true;
+  syncActiveBrowserView();
+  if (options.focus !== false && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  sendBrowserState();
+  return browserState();
+};
+
+const detachBrowserTab = async (id) => {
+  const tab = browserTabById(id);
+  if (!tab) return browserState();
+  if (tab.detachedWindow && !tab.detachedWindow.isDestroyed()) {
+    tab.detachedWindow.show();
+    tab.detachedWindow.focus();
+    return browserState();
+  }
+
+  removeBrowserViewFromMain(tab.view);
+  const detachedWindow = new BrowserWindow({
+    title: tab.title || 'Multiprise browser',
+    width: 1080,
+    height: 760,
+    minWidth: 640,
+    minHeight: 420,
+    backgroundColor: '#242424',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  tab.detachedWindow = detachedWindow;
+  tab.closingDetachedWindow = false;
+  detachedWindow.on('resize', () => syncDetachedBrowserBounds(tab));
+  detachedWindow.on('close', (event) => {
+    if (tab.closingDetachedWindow) return;
+    event.preventDefault();
+    attachBrowserTab(tab.id);
+  });
+  detachedWindow.on('closed', () => {
+    if (tab.detachedWindow === detachedWindow) tab.detachedWindow = null;
+    sendBrowserState();
+  });
+  await detachedWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(detachedBrowserShell(tab.id))}`);
+  if (detachedWindow.isDestroyed()) return browserState();
+  detachedWindow.contentView.addChildView(tab.view);
+  syncDetachedBrowserBounds(tab);
+  detachedWindow.show();
+  sendBrowserState();
+  syncActiveBrowserView();
+  return browserState();
+};
+
 async function openBrowserTab(value, options = {}) {
   const url = normalizeBrowserUrl(value, true);
   const existing = url !== 'about:blank' ? browserTabs.find((tab) => tab.url === url) : null;
   if (existing) {
     activeBrowserTabId = existing.id;
     browserVisible = true;
+    if (existing.detachedWindow && !existing.detachedWindow.isDestroyed()) {
+      existing.detachedWindow.show();
+      existing.detachedWindow.focus();
+    }
     syncActiveBrowserView();
     sendBrowserState();
     return browserState();
@@ -314,7 +439,9 @@ async function openBrowserTab(value, options = {}) {
     url,
     loading: true,
     error: null,
-    view
+    view,
+    detachedWindow: null,
+    closingDetachedWindow: false
   };
   browserTabs.push(tab);
   activeBrowserTabId = tab.id;
@@ -333,7 +460,8 @@ async function openBrowserTab(value, options = {}) {
 }
 
 const activateBrowserTab = (id) => {
-  if (!browserTabs.some((tab) => tab.id === id)) return browserState();
+  const tab = browserTabById(id);
+  if (!tab) return browserState();
   activeBrowserTabId = id;
   browserVisible = true;
   syncActiveBrowserView();
@@ -345,7 +473,12 @@ const closeBrowserTab = (id) => {
   const index = browserTabs.findIndex((tab) => tab.id === id);
   if (index < 0) return browserState();
   const [tab] = browserTabs.splice(index, 1);
-  removeBrowserView(tab.view);
+  removeBrowserViewFromMain(tab.view);
+  removeBrowserViewFromDetachedWindow(tab);
+  if (tab.detachedWindow && !tab.detachedWindow.isDestroyed()) {
+    tab.closingDetachedWindow = true;
+    tab.detachedWindow.destroy();
+  }
   if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
   if (activeBrowserTabId === id) {
     activeBrowserTabId = browserTabs[Math.min(index, browserTabs.length - 1)]?.id || null;
@@ -357,10 +490,11 @@ const closeBrowserTab = (id) => {
 };
 
 const handleBrowserAction = async (_event, action, payload = {}) => {
-  const tab = activeBrowserTab();
   if (action === 'new') return openBrowserTab('about:blank');
   if (action === 'activate') return activateBrowserTab(payload.id);
   if (action === 'close') return closeBrowserTab(payload.id);
+  if (action === 'detach') return detachBrowserTab(payload.id || activeBrowserTabId);
+  if (action === 'attach') return attachBrowserTab(payload.id || activeBrowserTabId);
   if (action === 'set-bounds') {
     const source = payload.bounds || {};
     browserBounds = {
@@ -380,10 +514,11 @@ const handleBrowserAction = async (_event, action, payload = {}) => {
     sendBrowserState();
     return browserState();
   }
+  const tab = browserTabById(payload.id) || activeBrowserTab();
   if (!tab) return browserState();
   const contents = tab.view.webContents;
-  if (action === 'back' && contents.canGoBack()) contents.goBack();
-  if (action === 'forward' && contents.canGoForward()) contents.goForward();
+  if (action === 'back' && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+  if (action === 'forward' && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
   if (action === 'reload') tab.loading ? contents.stop() : contents.reload();
   if (action === 'navigate') {
     const url = normalizeBrowserUrl(payload.url);
@@ -400,7 +535,12 @@ const handleBrowserAction = async (_event, action, payload = {}) => {
 
 const destroyBrowserTabs = () => {
   browserTabs.forEach((tab) => {
-    removeBrowserView(tab.view);
+    removeBrowserViewFromMain(tab.view);
+    removeBrowserViewFromDetachedWindow(tab);
+    if (tab.detachedWindow && !tab.detachedWindow.isDestroyed()) {
+      tab.closingDetachedWindow = true;
+      tab.detachedWindow.destroy();
+    }
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
   });
   browserTabs = [];
@@ -457,6 +597,17 @@ app.whenReady().then(async () => {
     port: backend?.port || null,
     time: new Date().toISOString()
   }));
+
+  ipcMain.handle('clipboard:write', (_event, value) => {
+    clipboard.writeText(String(value ?? ''));
+    return { ok: true };
+  });
+
+  ipcMain.handle('external:open', async (_event, value) => {
+    const url = normalizeBrowserUrl(value);
+    await shell.openExternal(url);
+    return { ok: true };
+  });
 
   ipcMain.handle('browser:open', (_event, url, options) => openBrowserTab(url, options));
   ipcMain.handle('browser:state', () => browserState());

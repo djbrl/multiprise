@@ -7,6 +7,7 @@ declare global {
     url: string
     loading: boolean
     error?: string | null
+    detached: boolean
     canGoBack: boolean
     canGoForward: boolean
   }
@@ -29,7 +30,7 @@ declare global {
       ping?: () => Promise<{ ok: boolean; time: string }>
       backendHealth?: () => Promise<{ ok: boolean; url: string | null; port: number | null; time: string }>
       openExternal?: (url: string) => Promise<void>
-      copyText?: (text: string) => void
+      copyText?: (text: string) => Promise<{ ok: boolean }>
       browser?: {
         open: (url: string, options?: { title?: string }) => Promise<BrowserState>
         getState: () => Promise<BrowserState>
