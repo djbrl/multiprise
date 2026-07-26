@@ -1819,7 +1819,7 @@ async function startProject(project: ProjectView, options: {
   env?: Record<string, string>
 } = {}) {
   error.value = ''
-  const port = options.port ?? (options.forceAutoPort ? undefined : servicePort(project))
+  const port = options.port ?? (options.forceAutoPort || settings.auto_port ? undefined : servicePort(project))
   const env = options.env ?? buildEnvForService(project)
   if (isActionLoading('start', project.project.id)) return false
   setActionLoading('start', project.project.id, true)
