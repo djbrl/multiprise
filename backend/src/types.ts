@@ -1,4 +1,8 @@
 export type ProjectKind = 'command' | 'docker_compose'
+export type ServiceRole = 'backend' | 'frontend' | 'service'
+export type CommandSource = 'auto' | 'user'
+export type Framework = 'vite' | 'next' | 'nuxt' | 'nest' | 'node' | 'cargo' | 'docker' | 'unknown'
+export type ProcessPhase = 'stopped' | 'starting' | 'ready' | 'failed'
 
 export type ProcessSource = 'managed' | 'docker' | 'external' | 'none'
 
@@ -9,22 +13,32 @@ export type Project = {
   root_path?: string
   tags: string[]
   command?: string | null
+  command_source?: CommandSource
+  package_manager?: string | null
+  install_root?: string | null
+  framework?: Framework
   stop_command?: string | null
   port?: number | null
   icon_path?: string | null
   kind: ProjectKind
-  role?: 'backend' | 'frontend' | 'service'
+  role?: ServiceRole
   docker_running?: boolean
   docker_started_at?: string | null
   last_exit_code?: number | null
   last_exit_at?: string | null
+  last_error?: string | null
   created_at: string
 }
 
 export type ProcessStatus = {
+  phase: ProcessPhase
   running: boolean
+  ready: boolean
   pid?: number | null
   started_at?: string | null
+  ready_at?: string | null
+  error?: string | null
+  exit_code?: number | null
 }
 
 export type ProjectView = {
@@ -35,7 +49,10 @@ export type ProjectView = {
 export type DetectResponse = {
   scripts: Record<string, string>
   suggested_command?: string | null
+  suggested_script?: string | null
   package_manager?: string | null
+  package_root?: string | null
+  framework: Framework
   has_docker_compose: boolean
 }
 
@@ -47,7 +64,9 @@ export type LogLine = {
 
 export type Settings = {
   auto_port: boolean
+  auto_install: boolean
   port_base: number
+  startup_timeout_ms: number
   scan_depth: number
   scan_ignore: string[]
   theme?: string
@@ -58,7 +77,10 @@ export type ScanResult = {
   name: string
   scripts: Record<string, string>
   suggested_command?: string | null
+  suggested_script?: string | null
   package_manager?: string | null
+  package_root?: string | null
+  framework: Framework
   has_docker_compose: boolean
 }
 
@@ -92,19 +114,24 @@ export type DiscoveredService = {
   path: string
   cwd: string
   command: string
-  role: 'backend' | 'frontend' | 'service'
+  script?: string | null
+  command_source: CommandSource
+  role: ServiceRole
   kind: ProjectKind
   source: 'package.json' | 'Cargo.toml' | 'compose'
   package_manager?: string | null
+  install_root?: string | null
+  framework: Framework
   scripts: Record<string, string>
 }
 
 export type ServicePreview = {
   name: string
-  role: 'backend' | 'frontend' | 'service'
+  role: ServiceRole
   cwd: string
   start: string
   source: DiscoveredService['source']
+  framework: Framework
 }
 
 export type ProjectInspectResult = {
@@ -119,17 +146,18 @@ export type StartProjectPayload = {
   command?: string
   port?: number
   env?: Record<string, string>
-  role?: 'backend' | 'frontend' | 'service'
+  role?: ServiceRole
   force_auto_port?: boolean
 }
 
 export type AllocatePortsPayload = {
-  roles?: Array<'backend' | 'frontend' | 'service'>
+  roles?: ServiceRole[]
 }
 
 export type UpdateProjectPayload = {
   name?: string
   command?: string | null
+  command_source?: CommandSource
   stop_command?: string | null
   port?: number | null
 }

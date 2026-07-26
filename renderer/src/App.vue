@@ -2,6 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 type ProjectKind = 'command' | 'docker_compose'
+type ProcessPhase = 'stopped' | 'starting' | 'ready' | 'failed'
+type CommandSource = 'auto' | 'user'
+type Framework = 'vite' | 'next' | 'nuxt' | 'nest' | 'node' | 'cargo' | 'docker' | 'unknown'
 
 type Project = {
   id: string
@@ -10,6 +13,10 @@ type Project = {
   root_path?: string
   tags: string[]
   command?: string | null
+  command_source?: CommandSource
+  package_manager?: string | null
+  install_root?: string | null
+  framework?: Framework
   stop_command?: string | null
   port?: number | null
   kind: ProjectKind
@@ -18,13 +25,19 @@ type Project = {
   docker_started_at?: string | null
   last_exit_code?: number | null
   last_exit_at?: string | null
+  last_error?: string | null
   created_at: string
 }
 
 type ProcessStatus = {
+  phase: ProcessPhase
   running: boolean
+  ready: boolean
   pid?: number | null
   started_at?: string | null
+  ready_at?: string | null
+  error?: string | null
+  exit_code?: number | null
 }
 
 type ProjectView = {
@@ -35,7 +48,10 @@ type ProjectView = {
 type DetectResponse = {
   scripts: Record<string, string>
   suggested_command?: string | null
+  suggested_script?: string | null
   package_manager?: string | null
+  package_root?: string | null
+  framework: Framework
   has_docker_compose: boolean
 }
 
@@ -47,7 +63,9 @@ type LogLine = {
 
 type Settings = {
   auto_port: boolean
+  auto_install: boolean
   port_base: number
+  startup_timeout_ms: number
   scan_depth: number
   scan_ignore: string[]
   theme: ThemeKey
@@ -58,6 +76,7 @@ type ScanResult = {
   name: string
   scripts: Record<string, string>
   suggested_command?: string | null
+  framework?: Framework
   has_docker_compose: boolean
 }
 
@@ -67,6 +86,7 @@ type ServicePreview = {
   cwd?: string
   start?: string
   source?: 'package.json' | 'Cargo.toml' | 'compose'
+  framework?: Framework
 }
 
 type ProjectPreview = {
@@ -294,6 +314,7 @@ async function navigateBrowser() {
 const detected = reactive<Record<string, DetectResponse>>({})
 const logs = reactive<Record<string, LogLine[]>>({})
 const actionState = reactive<Record<string, { command: string; port: string }>>({})
+const actionCommandDirty = reactive<Record<string, boolean>>({})
 const logFilter = ref('')
 const logRoleFilter = ref<'all' | 'backend' | 'frontend'>('all')
 const logLevelFilter = ref<'all' | 'errors' | 'warnings'>('all')
@@ -386,6 +407,7 @@ const chipActive =
   'border-2 border-[var(--text-strong)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)]'
 const statusDot = 'inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-[var(--status-border)] bg-[var(--status-bg)]'
 const statusDotLive = 'border-[var(--live)] bg-[var(--live)]'
+const statusDotFailed = 'border-[var(--log-error)] bg-[var(--log-error)]'
 const inputBase =
   'w-full rounded-xl border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--input-text)] placeholder:text-[var(--input-placeholder)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]'
 const noScrollbar =
@@ -430,14 +452,18 @@ const externalMenuOpen = reactive<Record<string, boolean>>({})
 
 const settings = reactive<Settings>({
   auto_port: true,
+  auto_install: true,
   port_base: 3000,
+  startup_timeout_ms: 20000,
   scan_depth: 8,
   scan_ignore: [],
   theme: 'light',
 })
 const settingsDraft = reactive<Settings>({
   auto_port: true,
+  auto_install: true,
   port_base: 3000,
+  startup_timeout_ms: 20000,
   scan_depth: 8,
   scan_ignore: [],
   theme: 'light',
@@ -625,13 +651,29 @@ function ensureActionState(project: ProjectView) {
 function syncActionDefaults() {
   projects.value.forEach((project) => {
     const state = ensureActionState(project)
-    if (!state.command && project.project.command) {
-      state.command = project.project.command
-    }
-    if (!state.command && detected[project.project.id]?.suggested_command) {
-      state.command = detected[project.project.id].suggested_command ?? ''
+    if (!actionCommandDirty[project.project.id]) {
+      state.command = project.project.command ?? detected[project.project.id]?.suggested_command ?? ''
     }
   })
+}
+
+function serviceReady(service: ProjectView) {
+  return service.status.phase === 'ready' || (service.status.ready && service.status.running)
+}
+
+function serviceStarting(service: ProjectView) {
+  return service.status.phase === 'starting'
+}
+
+function serviceFailed(service: ProjectView) {
+  return service.status.phase === 'failed'
+}
+
+function serviceStatusLabel(service: ProjectView) {
+  if (serviceStarting(service)) return 'Starting'
+  if (serviceReady(service)) return 'Ready'
+  if (serviceFailed(service)) return 'Failed'
+  return 'Stopped'
 }
 
 function projectTitle(item: ProjectView) {
@@ -1685,6 +1727,45 @@ async function detectProject(project: ProjectView) {
   }
 }
 
+async function persistServiceCommand(project: ProjectView) {
+  const id = project.project.id
+  const command = ensureActionState(project).command.trim()
+  if (!command || command === (project.project.command ?? '')) {
+    actionCommandDirty[id] = false
+    return
+  }
+  try {
+    const response = await apiFetch(`/api/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command, command_source: 'user' })
+    })
+    if (!response.ok) await throwResponseError(response, 'Failed to save command')
+    actionCommandDirty[id] = false
+    await loadProjects()
+  } catch (err) {
+    setActionError(id, err instanceof Error ? err.message : 'Failed to save command')
+  }
+}
+
+async function resetServiceCommand(project: ProjectView) {
+  const id = project.project.id
+  try {
+    const response = await apiFetch(`/api/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: null, command_source: 'auto' })
+    })
+    if (!response.ok) await throwResponseError(response, 'Failed to restore automatic command')
+    const data = (await response.json()) as ProjectView
+    actionCommandDirty[id] = false
+    ensureActionState(project).command = data.project.command ?? ''
+    await loadProjects()
+  } catch (err) {
+    setActionError(id, err instanceof Error ? err.message : 'Failed to restore automatic command')
+  }
+}
+
 async function toggleService(project: ProjectView) {
   if (project.status.running) {
     await stopProject(project)
@@ -1740,7 +1821,7 @@ async function startProject(project: ProjectView, options: {
   error.value = ''
   const port = options.port ?? (options.forceAutoPort ? undefined : servicePort(project))
   const env = options.env ?? buildEnvForService(project)
-  if (isActionLoading('start', project.project.id)) return
+  if (isActionLoading('start', project.project.id)) return false
   setActionLoading('start', project.project.id, true)
   if (actionErrors[project.project.id]) {
     delete actionErrors[project.project.id]
@@ -1765,10 +1846,14 @@ async function startProject(project: ProjectView, options: {
     await fetchLogs(project.project.id)
     await fetchInstances(project)
     await fetchUsedPorts()
+    return true
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to start service'
     error.value = message
     setActionError(project.project.id, message)
+    await loadProjects()
+    await fetchLogs(project.project.id)
+    return false
   } finally {
     setActionLoading('start', project.project.id, false)
   }
@@ -1940,12 +2025,20 @@ function formatPortSource(source: ProcessSource) {
   return 'Unknown'
 }
 
+function groupReadyCount(group: Group<ProjectView>) {
+  return group.items.filter((item) => !isDockerService(item) && serviceReady(item)).length
+}
+
+function groupServiceCount(group: Group<ProjectView>) {
+  return group.items.filter((item) => !isDockerService(item)).length
+}
+
 function groupRunningCount(group: Group<ProjectView>) {
   return group.items.filter((item) => !isDockerService(item) && item.status.running).length
 }
 
 function groupHasNpmServices(group: Group<ProjectView>) {
-  return group.items.some((item) => !isDockerService(item))
+  return groupServiceCount(group) > 0
 }
 
 function groupHasRunning(group: Group<ProjectView>) {
@@ -1960,59 +2053,75 @@ async function launchGroup(group: Group<ProjectView>, manualPorts?: Record<strin
   }
   groupActionLoading[group.key] = 'launch'
   try {
-    const launchableServices = group.items.filter((service) => !isDockerService(service) && !service.status.running)
-    const backendService = group.items.find((service) => !isDockerService(service) && serviceRole(service) === 'backend')
-    const frontendService = group.items.find((service) => !isDockerService(service) && serviceRole(service) === 'frontend')
+    const regularServices = group.items.filter((service) => !isDockerService(service))
+    const backendServices = regularServices.filter((service) => serviceRole(service) === 'backend')
+    const frontendServices = regularServices.filter((service) => serviceRole(service) === 'frontend')
+    const supportServices = regularServices.filter((service) => serviceRole(service) === 'service')
+    const primaryBackend = backendServices[0]
+    const primaryFrontend = frontendServices[0]
     const rolesToAllocate: ServiceRole[] = []
-    const existingBackendPort = backendService
-      ? servicePort(backendService) ?? (backendService.status.running ? effectivePort(backendService) ?? undefined : undefined)
+    const existingBackendPort = primaryBackend
+      ? servicePort(primaryBackend) ?? (primaryBackend.status.running ? effectivePort(primaryBackend) ?? undefined : undefined)
       : undefined
-    const existingFrontendPort = frontendService
-      ? servicePort(frontendService) ?? (frontendService.status.running ? effectivePort(frontendService) ?? undefined : undefined)
+    const existingFrontendPort = primaryFrontend
+      ? servicePort(primaryFrontend) ?? (primaryFrontend.status.running ? effectivePort(primaryFrontend) ?? undefined : undefined)
       : undefined
 
-    if (settings.auto_port && backendService && !backendService.status.running && !existingBackendPort) rolesToAllocate.push('backend')
-    if (settings.auto_port && frontendService && !frontendService.status.running && !existingFrontendPort) rolesToAllocate.push('frontend')
+    if (settings.auto_port && primaryBackend && !primaryBackend.status.running && !existingBackendPort) rolesToAllocate.push('backend')
+    if (settings.auto_port && primaryFrontend && !primaryFrontend.status.running && !existingFrontendPort) rolesToAllocate.push('frontend')
 
     let allocatedPorts: Partial<Record<ServiceRole, number>> = {}
     if (rolesToAllocate.length) {
       const response = await apiFetch('/api/ports/allocate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roles: rolesToAllocate }),
+        body: JSON.stringify({ roles: rolesToAllocate })
       })
-      if (!response.ok) {
-        await throwResponseError(response, 'Failed to allocate ports')
-      }
-      const data = (await response.json()) as { ports?: Partial<Record<ServiceRole, number>> }
-      allocatedPorts = data.ports ?? {}
+      if (!response.ok) await throwResponseError(response, 'Failed to allocate ports')
+      allocatedPorts = ((await response.json()) as { ports?: Partial<Record<ServiceRole, number>> }).ports ?? {}
     }
 
-    const backendPort = backendService
-      ? manualPorts?.[backendService.project.id] ?? existingBackendPort ?? allocatedPorts.backend
+    const backendPort = primaryBackend
+      ? manualPorts?.[primaryBackend.project.id] ?? existingBackendPort ?? allocatedPorts.backend
       : undefined
-    const frontendPort = frontendService
-      ? manualPorts?.[frontendService.project.id] ?? existingFrontendPort ?? allocatedPorts.frontend
+    const frontendPort = primaryFrontend
+      ? manualPorts?.[primaryFrontend.project.id] ?? existingFrontendPort ?? allocatedPorts.frontend
       : undefined
     const groupEnv: Record<string, string> = {}
     if (backendPort) groupEnv.BACKEND_PORT = String(backendPort)
     if (frontendPort) groupEnv.FRONTEND_PORT = String(frontendPort)
 
-    for (const service of group.items) {
-      if (isDockerService(service)) continue
-      if (!service.status.running) {
+    const launchStage = async (services: ProjectView[]) => {
+      let allReady = true
+      for (const service of services) {
+        if (serviceReady(service)) continue
         const role = serviceRole(service)
         const port = manualPorts?.[service.project.id] ?? (role === 'backend'
           ? backendPort
           : role === 'frontend'
             ? frontendPort
             : undefined)
-        await startProject(service, {
+        const ready = await startProject(service, {
           port,
           env: Object.keys(groupEnv).length ? groupEnv : undefined
         })
+        if (!ready) allReady = false
+      }
+      return allReady
+    }
+
+    await launchStage(supportServices)
+    const backendsReady = await launchStage(backendServices)
+    if (backendsReady) {
+      await launchStage(frontendServices)
+    } else {
+      for (const frontend of frontendServices.filter((service) => !service.status.running)) {
+        setActionError(frontend.project.id, 'Waiting for the backend to become ready before launching this service.')
       }
     }
+    await loadProjects()
+    await refreshSelectedLogs()
+    await fetchUsedPorts()
   } finally {
     groupActionLoading[group.key] = null
   }
@@ -2120,6 +2229,12 @@ function applySettingsPatch(patch: Partial<Settings>) {
   if (typeof patch.auto_port === 'boolean') {
     settings.auto_port = patch.auto_port
   }
+  if (typeof patch.auto_install === 'boolean') {
+    settings.auto_install = patch.auto_install
+  }
+  if (typeof patch.startup_timeout_ms === 'number' && Number.isFinite(patch.startup_timeout_ms)) {
+    settings.startup_timeout_ms = Math.min(Math.max(Math.floor(patch.startup_timeout_ms), 10000), 30000)
+  }
   if (typeof patch.port_base === 'number' && Number.isFinite(patch.port_base)) {
     settings.port_base = Math.min(Math.max(Math.floor(patch.port_base), 1), 65535)
   }
@@ -2138,6 +2253,8 @@ function applySettingsPatch(patch: Partial<Settings>) {
 function normalizeDraftSettings(draft: Settings) {
   return {
     auto_port: !!draft.auto_port,
+    auto_install: !!draft.auto_install,
+    startup_timeout_ms: Math.min(Math.max(Math.floor(draft.startup_timeout_ms ?? settings.startup_timeout_ms), 10000), 30000),
     port_base: Math.min(Math.max(Math.floor(draft.port_base ?? settings.port_base), 1), 65535),
     scan_depth: Math.min(Math.max(Math.floor(draft.scan_depth ?? settings.scan_depth), 1), 64),
     scan_ignore: scanIgnoreDraft.value
@@ -2150,6 +2267,8 @@ function normalizeDraftSettings(draft: Settings) {
 
 function syncSettingsDraftFromSettings() {
   settingsDraft.auto_port = settings.auto_port
+  settingsDraft.auto_install = settings.auto_install
+  settingsDraft.startup_timeout_ms = settings.startup_timeout_ms
   settingsDraft.port_base = settings.port_base
   settingsDraft.scan_depth = settings.scan_depth
   settingsDraft.scan_ignore = [...settings.scan_ignore]
@@ -2161,6 +2280,8 @@ const settingsDirty = computed(() => {
   const draft = normalizeDraftSettings(settingsDraft)
   return (
     draft.auto_port !== settings.auto_port ||
+    draft.auto_install !== settings.auto_install ||
+    draft.startup_timeout_ms !== settings.startup_timeout_ms ||
     draft.port_base !== settings.port_base ||
     draft.scan_depth !== settings.scan_depth ||
     draft.theme !== settings.theme ||
@@ -2534,13 +2655,13 @@ watch(
               >
                 <span class="flex min-w-0 flex-1 items-center gap-2" :class="sidebarCollapsed ? 'justify-center' : ''">
                   <span
-                    :class="[statusDot, group.items.some((item) => item.status.running) ? statusDotLive : '']"
-                    :aria-label="group.items.some((item) => item.status.running) ? 'Live' : 'Idle'"
+                    :class="[statusDot, group.items.some((item) => serviceReady(item)) ? statusDotLive : '']"
+                    :aria-label="group.items.some((item) => serviceReady(item)) ? 'Live' : 'Idle'"
                   ></span>
                   <span
                     v-if="!sidebarCollapsed"
                     class="block truncate text-[13px]"
-                    :class="group.items.some((item) => item.status.running) ? 'font-semibold text-[var(--text-strong)]' : 'text-[var(--text-muted)]'"
+                    :class="group.items.some((item) => serviceReady(item)) ? 'font-semibold text-[var(--text-strong)]' : 'text-[var(--text-muted)]'"
                   >
                     {{ group.name }}
                   </span>
@@ -2679,6 +2800,9 @@ watch(
                     </div>
                   </div>
                   <div class="flex items-center justify-end gap-3">
+                    <span v-if="groupHasNpmServices(selectedGroup)" class="text-xs font-medium text-[var(--text-muted)]">
+                      {{ groupReadyCount(selectedGroup) }}/{{ groupServiceCount(selectedGroup) }} ready
+                    </span>
                     <button
                       :class="groupHasRunning(selectedGroup) ? btnUnplugLg : btnPanelPrimaryLg"
                       :disabled="!groupHasNpmServices(selectedGroup) || !!groupActionLoading[selectedGroup.key]"
@@ -2778,6 +2902,12 @@ watch(
                               >
                                 {{ actionErrors[service.project.id] }}
                               </div>
+                              <div
+                                v-if="service.status.error && !actionErrors[service.project.id]"
+                                class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2 py-1 text-xs text-[var(--warning-text)]"
+                              >
+                                {{ service.status.error }}
+                              </div>
                               </div>
 
                               <div
@@ -2789,9 +2919,10 @@ watch(
                               <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0">
                                   <div class="flex items-center gap-2">
-                                    <span :class="[statusDot, service.status.running ? statusDotLive : '']" :aria-label="service.status.running ? 'Live' : 'Idle'"></span>
+                                    <span :class="[statusDot, serviceReady(service) ? statusDotLive : serviceFailed(service) ? statusDotFailed : '']" :aria-label="serviceStatusLabel(service)"></span>
                                     <p class="text-sm font-semibold text-[var(--text-strong)]">{{ projectTitle(service) }}</p>
-                                    <span v-if="service.status.running && effectivePort(service)" class="font-mono text-[11px] text-[var(--text-subtle)]">
+                                    <span class="text-[10px] font-medium" :class="serviceFailed(service) ? 'text-[var(--log-error)]' : 'text-[var(--text-subtle)]'">{{ serviceStatusLabel(service) }}</span>
+                                    <span v-if="serviceReady(service) && effectivePort(service)" class="font-mono text-[11px] text-[var(--text-subtle)]">
                                       :{{ effectivePort(service) }}
                                     </span>
                                     <span v-if="service.status.running && servicePid(service)" class="font-mono text-[10px] text-[var(--text-subtle)]">
@@ -2822,10 +2953,23 @@ watch(
                                 </div>
                               </div>
                               <div class="mt-3 space-y-2.5">
-                                <p class="truncate text-[11px] text-[var(--text-subtle)]" :title="actionFor(service).command || 'Not set'">
-                                  <span class="font-mono text-[var(--text-muted)]">
-                                    {{ actionFor(service).command || 'Not set' }}
-                                  </span>
+                                <div v-if="!service.status.running" class="flex items-center gap-2">
+                                  <input
+                                    v-model="actionFor(service).command"
+                                    :class="[inputBase, 'h-8 min-w-0 flex-1 py-1 font-mono text-[11px]']"
+                                    placeholder="Start command"
+                                    @input="actionCommandDirty[service.project.id] = true"
+                                    @change="persistServiceCommand(service)"
+                                  />
+                                  <button
+                                    v-if="service.project.command_source === 'user'"
+                                    :class="btnPanelSecondary"
+                                    title="Restore the automatically detected script"
+                                    @click="resetServiceCommand(service)"
+                                  >Auto</button>
+                                </div>
+                                <p v-else class="truncate font-mono text-[11px] text-[var(--text-muted)]" :title="actionFor(service).command || 'Not set'">
+                                  {{ actionFor(service).command || 'Not set' }}
                                 </p>
                                 <div v-if="!service.status.running" class="flex flex-wrap items-center gap-3">
                                   <input
@@ -2878,7 +3022,7 @@ watch(
                                 <div v-else class="flex justify-end">
                                   <button
                                     :class="service.status.running ? btnUnplug : btnPanelSecondary"
-                                    :disabled="isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)"
+                                    :disabled="serviceStarting(service) || isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)"
                                     @click="toggleService(service)"
                                   >
                                     <span
@@ -2887,7 +3031,9 @@ watch(
                                       aria-hidden="true"
                                     ></span>
                                     {{
-                                      isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)
+                                      serviceStarting(service)
+                                        ? 'Starting…'
+                                        : isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)
                                         ? service.status.running
                                           ? 'Unplugging…'
                                           : 'Starting…'
@@ -2905,7 +3051,13 @@ watch(
                                 {{ actionErrors[service.project.id] }}
                               </div>
                               <div
-                                v-if="service.status.running && effectivePort(service)"
+                                v-if="service.status.error && !actionErrors[service.project.id]"
+                                class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2 py-1 text-xs text-[var(--warning-text)]"
+                              >
+                                {{ service.status.error }}
+                              </div>
+                              <div
+                                v-if="serviceReady(service) && effectivePort(service)"
                                 class="mt-3 flex items-center justify-between rounded-xl bg-[var(--highlight-bg)] px-2.5 py-2 text-[11px] text-[var(--text-muted)]"
                               >
                                 <span class="truncate">
@@ -2995,7 +3147,7 @@ watch(
                           >
                             <div class="flex items-center justify-between gap-3">
                               <div class="flex min-w-0 items-center gap-2">
-                                <span :class="[statusDot, service.status.running ? statusDotLive : '']" :aria-label="service.status.running ? 'Live' : 'Idle'"></span>
+                                <span :class="[statusDot, serviceReady(service) ? statusDotLive : serviceFailed(service) ? statusDotFailed : '']" :aria-label="serviceStatusLabel(service)"></span>
                                 <div class="min-w-0">
                                   <p class="truncate text-[13px] font-semibold text-[var(--text-strong)]">{{ projectTitle(service) }}</p>
                                   <p class="truncate font-mono text-[10px] text-[var(--text-subtle)]">
@@ -3005,7 +3157,7 @@ watch(
                               </div>
                               <button
                                 :class="service.status.running ? btnUnplug : btnPanelSecondary"
-                                :disabled="isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)"
+                                :disabled="serviceStarting(service) || isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)"
                                 @click="toggleService(service)"
                               >
                                 <span
@@ -3283,6 +3435,31 @@ watch(
                         :class="[inputBase, 'mt-3 !w-36 text-left text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none']"
                       />
                     </div>
+                  </section>
+
+                  <section class="rounded-2xl bg-[var(--panel-muted)] p-5">
+                    <div>
+                      <p class="text-[15px] font-semibold text-[var(--text-strong)]">Launch readiness</p>
+                      <p class="mt-1 text-xs leading-5 text-[var(--text-subtle)]">Prepare dependencies and decide how long services have to open their port.</p>
+                    </div>
+                    <div class="mt-5 flex items-center justify-between gap-4">
+                      <span>
+                        <span class="block text-sm text-[var(--text)]">Prepare automatically</span>
+                        <span class="mt-0.5 block text-xs text-[var(--text-subtle)]">Install missing dependencies and build missing startup targets.</span>
+                      </span>
+                      <div class="flex shrink-0 rounded-lg bg-[var(--panel-bg)] p-1">
+                        <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="settingsDraft.auto_install ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.auto_install = true">On</button>
+                        <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="!settingsDraft.auto_install ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.auto_install = false">Off</button>
+                      </div>
+                    </div>
+                    <label class="mt-5 block border-t border-[var(--border)] pt-4">
+                      <span class="block text-sm text-[var(--text)]">Startup timeout</span>
+                      <span class="mt-0.5 block text-xs text-[var(--text-subtle)]">Wait 10–30 seconds for the assigned port to become ready.</span>
+                      <div class="mt-3 flex items-center gap-2">
+                        <input v-model.number="settingsDraft.startup_timeout_ms" type="number" min="10000" max="30000" step="1000" :class="[inputBase, '!w-36 text-left text-sm']" />
+                        <span class="text-xs text-[var(--text-subtle)]">milliseconds</span>
+                      </div>
+                    </label>
                   </section>
 
                   <section class="rounded-2xl bg-[var(--panel-muted)] p-5">

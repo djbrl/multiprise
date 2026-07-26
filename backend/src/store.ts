@@ -11,7 +11,9 @@ const settingsFile = path.join(dataDir, 'settings.json')
 
 const defaultSettings: Settings = {
   auto_port: true,
+  auto_install: true,
   port_base: 3000,
+  startup_timeout_ms: 20000,
   scan_depth: 8,
   scan_ignore: [],
   theme: 'dark'
@@ -51,7 +53,8 @@ export async function loadSettings(): Promise<Settings> {
   return {
     ...defaultSettings,
     ...data,
-    scan_ignore: Array.isArray(data.scan_ignore) ? data.scan_ignore : []
+    scan_ignore: Array.isArray(data.scan_ignore) ? data.scan_ignore : [],
+    startup_timeout_ms: Math.min(30000, Math.max(10000, Number(data.startup_timeout_ms) || defaultSettings.startup_timeout_ms))
   }
 }
 

@@ -15,7 +15,9 @@
     "build:renderer": "vite build --config renderer/vite.config.js",
     "build:backend": "node scripts/clean-backend.mjs && tsc -p backend/tsconfig.json",
     "start": "electron .",
-    "package:mac": "npm run build:api && npm run build:web && electron-builder --mac"
+    "package:mac": "npm run build:api && npm run build:web && electron-builder --mac",
+    "test:backend": "npm run build:api && node --test backend/test/*.test.cjs",
+    "test": "npm run test:backend && npm run build:web"
   },
   "dependencies": {
     "express": "^4.22.2",
@@ -56,7 +58,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
-      "identity": null,
+      "identity": "-",
       "target": [
         {
           "target": "dmg",

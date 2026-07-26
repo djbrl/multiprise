@@ -22,9 +22,10 @@ import {
   type UpdateProjectPayload,
   type UsedPort
 } from './types'
-import { detectProject, discoverProjectServices, scanProjects } from './scanner'
+import { adaptCommandForFramework, detectProject, discoverProjectServices, scanProjects } from './scanner'
 import { listListeningPorts, pickRandomPort } from './ports'
-import { clearLogs, getLogs, getProcessPid, getProcessStatus, startProcess, stopProcess } from './processes'
+import { clearLogs, getLogs, getProcessPid, getProcessStatus, markProcessFailed, startProcess, stopProcess } from './processes'
+import { prepareService } from './preparation'
 import { persistProjects, persistSettings } from './state'
 import { assertCommandAvailable } from './runtime'
 
@@ -154,9 +155,14 @@ const buildProjectView = (project: Project): ProjectView => {
     return {
       project,
       status: {
+        phase: project.docker_running ? 'ready' : 'stopped',
         running: !!project.docker_running,
+        ready: !!project.docker_running,
         pid: null,
-        started_at: project.docker_started_at ?? null
+        started_at: project.docker_started_at ?? null,
+        ready_at: project.docker_started_at ?? null,
+        error: project.last_error ?? null,
+        exit_code: project.last_exit_code ?? null
       }
     }
   }
@@ -300,29 +306,40 @@ async function openInFileManager(targetPath: string) {
   throw new Error(`Open in file manager failed (${attempt.error ?? 'unknown'})`)
 }
 
-async function resolveStartCommand(project: Project) {
+export async function resolveStartCommand(project: Project, payload: StartProjectPayload) {
+  const detection = await detectProject(project.path, project.root_path ?? project.path)
+  const projectCommand = project.command?.trim() ?? ''
+  const payloadCommand = payload.command?.trim() ?? ''
+  const payloadIsUserOverride = !!payloadCommand && payloadCommand !== projectCommand
+
   if (project.kind === 'docker_compose') {
     return {
-      command: project.command || 'docker compose up -d --build',
-      cwd: project.path
+      command: payloadCommand || projectCommand || 'docker compose up -d --build',
+      commandSource: payloadIsUserOverride || project.command_source === 'user' ? 'user' as const : 'auto' as const,
+      cwd: project.path,
+      detection
     }
   }
 
-  const detection = await detectProject(project.path, project.root_path ?? project.path)
-  const command = detection.suggested_command
+  const commandSource = payloadIsUserOverride || project.command_source === 'user' ? 'user' as const : 'auto' as const
+  const command = commandSource === 'user'
+    ? payloadCommand || projectCommand
+    : detection.suggested_command?.trim() || payloadCommand || projectCommand
+
   if (!command || /^docker(?:-|\s)/.test(command)) {
     throw new Error(`No runnable development script found in ${project.path}`)
   }
 
-  return { command, cwd: project.path }
+  return { command, commandSource, cwd: project.path, detection }
 }
 
 async function buildStartEnv(options: {
   payloadEnv?: Record<string, string>
   role: 'backend' | 'frontend' | 'service'
+  framework?: Project['framework']
   port?: number
 }) {
-  const { payloadEnv, role, port } = options
+  const { payloadEnv, role, framework, port } = options
   const merged: Record<string, string> = { ...(payloadEnv ?? {}) }
   const backendPort = merged.BACKEND_PORT ? Number(merged.BACKEND_PORT) : role === 'backend' ? port : undefined
   const frontendPort = merged.FRONTEND_PORT ? Number(merged.FRONTEND_PORT) : role === 'frontend' ? port : undefined
@@ -342,6 +359,14 @@ async function buildStartEnv(options: {
   if (port) {
     merged.PORT ||= String(port)
     merged.SERVICE_PORT ||= String(port)
+    if (framework === 'nuxt') {
+      merged.NUXT_PORT ||= String(port)
+      merged.NITRO_PORT ||= String(port)
+    }
+    if (framework === 'cargo') {
+      merged.ROCKET_PORT ||= String(port)
+      merged.LEPTOS_SITE_ADDR ||= `127.0.0.1:${port}`
+    }
   }
 
   return merged
@@ -417,6 +442,10 @@ export async function createApp(state: AppState) {
       root_path: projectPath,
       tags: [],
       command: service.command,
+      command_source: service.command_source,
+      package_manager: service.package_manager ?? null,
+      install_root: service.install_root ?? null,
+      framework: service.framework,
       stop_command: service.kind === 'docker_compose' ? 'docker compose down' : null,
       port: null,
       icon_path: iconPath,
@@ -426,6 +455,7 @@ export async function createApp(state: AppState) {
       docker_started_at: null,
       last_exit_code: null,
       last_exit_at: null,
+      last_error: null,
       created_at: createdAt
     }))
 
@@ -467,7 +497,8 @@ export async function createApp(state: AppState) {
             role: service.role,
             cwd: service.cwd,
             start: service.command,
-            source: service.source
+            source: service.source,
+            framework: service.framework
           }))
         })
       } catch (err) {
@@ -494,8 +525,18 @@ export async function createApp(state: AppState) {
     if (payload.name !== undefined) {
       project.name = payload.name
     }
-    if (payload.command !== undefined) {
-      project.command = payload.command
+    if (payload.command !== undefined || payload.command_source !== undefined) {
+      const requestedSource = payload.command_source ?? (payload.command !== undefined ? 'user' : project.command_source ?? 'auto')
+      project.command_source = requestedSource
+      if (requestedSource === 'auto') {
+        const detection = await detectProject(project.path, project.root_path ?? project.path)
+        project.command = detection.suggested_command ?? null
+        project.package_manager = detection.package_manager ?? null
+        project.install_root = detection.package_root ?? null
+        project.framework = detection.framework
+      } else if (payload.command !== undefined) {
+        project.command = payload.command
+      }
     }
     if (payload.stop_command !== undefined) {
       project.stop_command = payload.stop_command
@@ -526,7 +567,7 @@ export async function createApp(state: AppState) {
     if (!project) {
       return res.status(404).send('Project not found')
     }
-    const data: DetectResponse = await detectProject(project.path)
+    const data: DetectResponse = await detectProject(project.path, project.root_path ?? project.path)
     return res.json(data)
   })
 
@@ -566,16 +607,24 @@ export async function createApp(state: AppState) {
       return res.status(400).send('Choose a port before launching this service')
     }
 
+    clearLogs(project.id)
     try {
-      const { command, cwd } = await resolveStartCommand(project)
+      const { command, commandSource, cwd, detection } = await resolveStartCommand(project, payload)
+      const framework = detection.framework ?? project.framework ?? 'unknown'
       const env = await buildStartEnv({
         payloadEnv: payload.env,
         role,
+        framework,
         port
       })
 
       project.command = command
+      project.command_source = commandSource
+      project.package_manager = detection.package_manager ?? project.package_manager ?? null
+      project.install_root = detection.package_root ?? project.install_root ?? null
+      project.framework = framework
       project.port = port ?? project.port ?? null
+      project.last_error = null
 
       if (project.kind === 'docker_compose') {
         await spawnCommand(command, cwd, env)
@@ -585,15 +634,32 @@ export async function createApp(state: AppState) {
         return res.json(buildProjectView(project))
       }
 
-      clearLogs(project.id)
-      startProcess({
+      await prepareService({
         id: project.id,
+        project,
+        detection,
         command,
+        autoInstall: state.settings.auto_install,
+        env
+      })
+      const launchCommand = adaptCommandForFramework({
+        command,
+        framework,
+        packageManager: project.package_manager,
+        port
+      })
+
+      await startProcess({
+        id: project.id,
+        command: launchCommand,
         cwd,
         env,
-        onExit: async (code) => {
+        port,
+        timeoutMs: state.settings.startup_timeout_ms,
+        onExit: async (code, error) => {
           project.last_exit_code = code ?? null
           project.last_exit_at = new Date().toISOString()
+          project.last_error = error ?? null
           await persistProjects(state)
         }
       })
@@ -601,7 +667,14 @@ export async function createApp(state: AppState) {
       await persistProjects(state)
       return res.json(buildProjectView(project))
     } catch (err) {
-      return res.status(400).send(err instanceof Error ? err.message : 'Failed to start')
+      const message = err instanceof Error ? err.message : 'Failed to start'
+      if (project.kind !== 'docker_compose' && getProcessStatus(project.id).phase !== 'failed') {
+        markProcessFailed(project.id, message)
+      }
+      project.last_error = message
+      project.last_exit_at = new Date().toISOString()
+      await persistProjects(state)
+      return res.status(400).send(message)
     }
   })
 
@@ -864,6 +937,8 @@ export async function createApp(state: AppState) {
     state.settings = {
       ...state.settings,
       ...payload,
+      auto_install: payload.auto_install ?? state.settings.auto_install,
+      startup_timeout_ms: Math.min(30000, Math.max(10000, Number(payload.startup_timeout_ms ?? state.settings.startup_timeout_ms) || 20000)),
       scan_ignore: ensureArray(payload.scan_ignore ?? state.settings.scan_ignore)
     }
     await persistSettings(state)

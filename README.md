@@ -58,11 +58,11 @@ Multiprise now discovers services directly from files the project already owns:
 - `Cargo.toml` for Rust services;
 - `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, or `compose.yaml` for optional Docker services.
 
-For JavaScript services, the command is selected only from scripts that actually exist. The preference order is `dev`, `start`, `start:dev`, `serve`, `develop`, `watch`, then `preview`. An npm `start` script is launched as `npm start`; other npm scripts use `npm run <script>`.
+For JavaScript services, Multiprise scores scripts that actually exist. `dev` and `start:dev` are strongly preferred, followed by `develop`, `watch`, and `serve`; `start` is a production fallback and `preview` is last. Commands containing production signals such as `node dist/`, `next start`, or `NODE_ENV=production` are penalized. An npm `start` script is launched as `npm start`; other npm scripts use `npm run <script>`. A command edited by the user becomes user-owned and is never overwritten by a rescan; automatic commands continue following the manifest.
 
 When a selected parent folder contains runnable child services, Multiprise ignores a root orchestration script to avoid launching the same backend and frontend twice. Docker Compose is detected separately and remains manual.
 
-Port configuration stays portable because Multiprise injects conventional environment variables instead of rewriting project files: `PORT`, `SERVICE_PORT`, `BACKEND_PORT`, `FRONTEND_PORT`, `API_PORT`, `VITE_PORT`, `VITE_API_PORT`, and `VITE_API_URL`.
+Port configuration stays portable through small framework adapters. Multiprise injects conventional variables such as `PORT`, `BACKEND_PORT`, `FRONTEND_PORT`, `API_PORT`, and frontend API values. Vite additionally receives an explicit `--port <port> --host 127.0.0.1` argument, while Nuxt and supported Cargo frameworks receive their conventional port variables.
 
 See [`PROJECT_DISCOVERY.md`](./PROJECT_DISCOVERY.md) for the complete discovery rules.
 
@@ -79,7 +79,7 @@ The ranges deliberately avoid overlap. Manual mode is strict: the user must sele
 
 ### 5. Add process ownership and reliable shutdown
 
-Each launched service is stored with its project, command, port, PID, process group, and lifecycle state. Multiprise reads the machine's listening ports to show both managed and external processes.
+Each launched service is stored with its project, command, command ownership, framework, port, PID, process group, and lifecycle state (`starting`, `ready`, `failed`, or `stopped`). Multiprise reads the machine's listening ports to show both managed and external processes.
 
 This distinction matters. If a developer started a service in another terminal, Multiprise should report an external instance rather than pretending it launched that process. Managed processes can be stopped as a group so child watchers do not remain headless after the parent command exits.
 
@@ -165,16 +165,16 @@ The renderer never receives unrestricted Node.js access. Privileged operations c
 
 When a user launches a project, Multiprise performs this sequence:
 
-1. Scan the selected project root for runnable manifests.
-2. Separate regular services from Docker services.
-3. Inspect active listeners and managed process state.
-4. Allocate or validate one port per regular service.
-5. Resolve `{{PORT}}`, `{{BACKEND_PORT}}`, and `{{FRONTEND_PORT}}` tokens.
-6. Spawn each detected command in its manifest directory.
-7. Record PID, process group, port, project, and service ownership.
-8. Stream sanitized logs to the renderer.
-9. Refresh active ports and service state.
-10. Expose running URLs to the browser controls.
+1. Scan the selected project root and score runnable manifest scripts.
+2. Separate regular services from manually controlled Docker services.
+3. Resolve the user-owned or automatically detected command.
+4. Honor `package.json#packageManager`, then fall back to lockfile detection.
+5. Install missing dependencies when automatic preparation is enabled.
+6. Build a missing `dist`, `build`, `.next`, or `.output` startup target once when a build script is available.
+7. Allocate or strictly validate one port per regular service.
+8. Start support services, then backend services, wait for readiness, and only then start frontend services.
+9. Mark a service ready only after its assigned port accepts connections; early exits and timeouts remain visible as failed states with final logs.
+10. Keep healthy services alive when another stage fails and report partial readiness such as `1/2 ready`.
 
 ## Project Structure
 
@@ -184,7 +184,9 @@ multiprise/
 │   ├── src/
 │   │   ├── server.ts            # Express routes and orchestration API
 │   │   ├── scanner.ts           # Project and runtime discovery
-│   │   ├── processes.ts         # Child-process lifecycle and logs
+│   │   ├── processes.ts         # Starting/ready/failed lifecycle and logs
+│   │   ├── preparation.ts       # Dependency install and missing-build preparation
+│   │   ├── failures.ts          # Actionable startup error classification
 │   │   ├── ports.ts             # Port inspection and allocation
 │   │   ├── store.ts             # Persistent project/settings storage
 │   └── tsconfig.json
@@ -192,6 +194,8 @@ multiprise/
 │   ├── src/App.vue              # Main Vue application
 │   ├── src/style.css            # Tailwind layers and theme tokens
 │   └── vite.config.js
+├── backend/test/                # Fixture-driven reliability regressions
+├── .github/workflows/ci.yml     # Build and reliability checks
 ├── scripts/dev.mjs              # Portable development launcher
 ├── main.cjs                     # Electron main process
 ├── preload.cjs                  # Context-isolated renderer bridge
@@ -211,7 +215,18 @@ Multiprise can discover common project layouts and commands for:
 - Rust/Cargo;
 - Docker Compose.
 
-The detected manifest is the source of truth. Multiprise refreshes commands from disk when it starts, so script changes do not require re-importing a project.
+The detected manifest is the source of truth until a user edits a service command. Automatic commands refresh from disk; user-owned commands persist across rescans until reset to Auto.
+
+
+## Reliability Tests
+
+Run the launch-pipeline regression suite with:
+
+```bash
+npm run test:backend
+```
+
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
 
 ## Run From Source
 

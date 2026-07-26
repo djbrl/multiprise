@@ -56,11 +56,28 @@ export async function normalizeProjects(state: AppState) {
       changed = true
     }
 
+    if (!project.command_source) {
+      project.command_source = 'auto'
+      changed = true
+    }
+
     if (project.kind === 'command') {
       const detection = await detectProject(project.path, project.root_path ?? project.path).catch(() => null)
       const detectedCommand = detection?.suggested_command
-      if (detectedCommand && !/^docker(?:-|\s)/.test(detectedCommand) && project.command !== detectedCommand) {
+      if (project.command_source !== 'user' && detectedCommand && !/^docker(?:-|\s)/.test(detectedCommand) && project.command !== detectedCommand) {
         project.command = detectedCommand
+        changed = true
+      }
+      if (detection && project.package_manager !== detection.package_manager) {
+        project.package_manager = detection.package_manager
+        changed = true
+      }
+      if (detection && project.install_root !== detection.package_root) {
+        project.install_root = detection.package_root
+        changed = true
+      }
+      if (detection && project.framework !== detection.framework) {
+        project.framework = detection.framework
         changed = true
       }
     }

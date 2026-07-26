@@ -1,22 +1,21 @@
 # Project Discovery
 
-Multiprise does not require a Multiprise-specific configuration file. Select the parent project folder and it discovers runnable services from the manifests already present in the repository.
+Multiprise does not require a custom configuration file. Select a parent project folder and it discovers runnable services from manifests already present in the repository.
 
-## Supported Manifests
-
-### package.json
+## JavaScript Services
 
 Multiprise recursively finds `package.json` files while skipping generated and dependency directories such as `node_modules`, `dist`, `build`, `.git`, and `target`.
 
-It selects the first script that actually exists in this order:
+It scores available scripts instead of selecting the first familiar name:
 
-1. `dev`
-2. `start`
-3. `start:dev`
-4. `serve`
-5. `develop`
-6. `watch`
-7. `preview`
+| Tier | Scripts | Behavior |
+| --- | --- | --- |
+| Preferred | `dev`, `start:dev` | Development servers and watch mode |
+| Fallback | `develop`, `watch`, `serve` | Other development entry points |
+| Production | `start` | Used when no stronger development command exists |
+| Last resort | `preview` | Intended for already-built output |
+
+Commands containing `node dist/`, `node build/`, `next start`, `NODE_ENV=production`, or preview commands receive a production penalty. This prevents a broken compiled `start` script from outranking a working `start:dev` command.
 
 Commands follow the detected package manager:
 
@@ -27,72 +26,52 @@ Commands follow the detected package manager:
 | Yarn | `yarn dev` |
 | Bun | `bun run dev` |
 
-The package manager is inferred from lockfiles in the service directory or its selected project root. npm is the fallback.
+`package.json#packageManager` is authoritative. Multiprise only inspects lockfiles when the field is absent, then falls back to npm.
 
-When Multiprise starts from Finder or the Dock on macOS, it imports `PATH` from the user's interactive login shell before launching services. This makes runtimes installed through Homebrew, fnm, nvm, Cargo, Bun, and similar shell-managed tools available to the packaged app. If a detected runtime is still unavailable, launch stops immediately with a clear runtime-not-found message.
+## Command Ownership
 
-### Cargo.toml
+Automatically detected commands keep following `package.json` during rescans. Editing a command in the Services panel marks it as user-owned, so Multiprise will not overwrite it. Choose **Auto** to restore manifest detection.
 
-A directory containing `Cargo.toml` is launched with:
+## Other Manifests
 
-```bash
-cargo run
-```
+A directory containing `Cargo.toml` is launched with `cargo run`.
 
-### Docker Compose
-
-Multiprise recognizes:
-
-- `docker-compose.yml`
-- `docker-compose.yaml`
-- `compose.yml`
-- `compose.yaml`
-
-Compose is shown as a separate optional service and launched with:
-
-```bash
-docker compose up -d --build
-```
-
-Docker services are not included in the project-level Launch action. They remain manually controlled.
+Multiprise recognizes `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, and `compose.yaml`. Compose appears as a separate optional service and uses `docker compose up -d --build`. Docker services are not included in project-level Launch.
 
 ## Parent Projects
 
-The folder selected in the picker is always the tracked project root. Services discovered below it remain grouped under that parent.
-
-If runnable child services exist, a runnable root `package.json` is treated as an orchestration wrapper and is not added as another service. This prevents a root command such as `npm run dev` from launching the same child backend and frontend a second time.
+The folder selected in the picker is always the tracked project root. Services discovered below it remain grouped under that parent. If runnable child services exist, a runnable root `package.json` is treated as an orchestration wrapper and is not added again.
 
 ## Service Roles
 
-Roles control port ranges and UI grouping. Multiprise infers them from common directory names and command contents:
+Roles control dependency order, port ranges, and UI grouping:
 
 - backend: `backend`, `server`, or `api`;
 - frontend: `frontend`, `client`, `web`, or `ui`;
 - service: anything else.
 
-Known frontend and backend tool names inside scripts provide a fallback when the directory name is generic.
+Project Launch starts support services first, waits for backends to become ready, and then starts frontends. A failed stage does not stop healthy services.
 
-## Injected Environment Variables
+## Automatic Preparation
 
-Multiprise chooses or validates ports and injects conventional variables into child processes:
+When enabled in Settings, Multiprise:
 
-- `PORT`
-- `SERVICE_PORT`
-- `BACKEND_PORT`
-- `FRONTEND_PORT`
-- `API_PORT`
-- `VITE_PORT`
-- `VITE_API_PORT`
-- `VITE_API_URL`
+1. checks for dependencies at the detected workspace install root;
+2. installs them once when `node_modules` is missing;
+3. detects missing compiled targets referenced by the selected command;
+4. runs the existing build script when available;
+5. starts the selected command only after preparation succeeds.
 
-A frontend launched together with a backend receives `VITE_API_URL` as `http://localhost:<backend-port>`.
+Preparation output appears in the normal service logs.
+
+## Port Adapters And Readiness
+
+Multiprise injects `PORT`, `SERVICE_PORT`, `BACKEND_PORT`, `FRONTEND_PORT`, and `API_PORT`. Frontends also receive `VITE_API_PORT` and `VITE_API_URL` when a backend port is known.
+
+Environment variables are supplemented by framework adapters. Vite receives explicit `--port` and `--host 127.0.0.1` arguments; Nuxt and supported Cargo frameworks receive their conventional variables.
+
+A PID means only that a service is **starting**. Multiprise marks it **ready** after the assigned port accepts connections. Early exits and readiness timeouts become persistent **failed** states with final logs and recovery guidance.
 
 ## Scan Settings
 
-Settings control:
-
-- maximum recursive scan depth;
-- ignored directory names;
-- automatic or manual port assignment.
-
-A selected project must contain at least one runnable package script, `Cargo.toml`, or Compose file within the configured scan depth.
+Settings control scan depth, ignored folders, automatic versus manual ports, automatic preparation, and a startup timeout from 10 to 30 seconds.
