@@ -166,7 +166,7 @@ export function adaptCommandForFramework(options: {
   port?: number
 }) {
   const { command, framework, packageManager, port } = options
-  if (!port || framework !== 'vite' || /(?:^|\s)--port(?:\s|=)/.test(command)) return command
+  if (!port || !['vite', 'nuxt'].includes(framework) || /(?:^|\s)--port(?:\s|=)/.test(command)) return command
 
   const args = `--port ${port} --host 127.0.0.1`
   if (packageManager === 'npm' || packageManager === 'bun') return `${command} -- ${args}`

@@ -57,6 +57,13 @@ test('Vite receives a strict selected port through CLI arguments', () => {
   )
 })
 
+test('Nuxt receives a strict selected port through CLI arguments', () => {
+  assert.equal(
+    scanner.adaptCommandForFramework({ command: 'npm run dev', framework: 'nuxt', packageManager: 'npm', port: 4836 }),
+    'npm run dev -- --port 4836 --host 127.0.0.1'
+  )
+})
+
 test('automatic preparation builds a missing compiled startup target once', async () => {
   const root = await temporaryDirectory('multiprise-build')
   await fs.mkdir(path.join(root, 'scripts'))
@@ -106,6 +113,18 @@ test('an early process exit is retained as a failed state with final logs', asyn
   assert.ok(processes.getLogs(id).some((line) => line.line.includes('API_KEY')))
 })
 
+test('a removed service folder fails cleanly instead of emitting an unhandled spawn error', async () => {
+  const root = await temporaryDirectory('multiprise-missing-cwd')
+  const missing = path.join(root, 'apps', 'api')
+  const id = 'fixture-missing-cwd'
+
+  await assert.rejects(
+    processes.startProcess({ id, command: 'npm run dev', cwd: missing, timeoutMs: 1000 }),
+    /folder no longer exists/i
+  )
+  assert.equal(processes.getProcessStatus(id).phase, 'stopped')
+})
+
 test('common startup errors are classified into actionable categories', () => {
   assert.equal(classifyStartupFailure('Error: listen EADDRINUSE', 'failed', 4000).code, 'port-in-use')
   assert.equal(classifyStartupFailure("Cannot find module '/app/dist/main.js'", 'failed').code, 'missing-build')
@@ -138,6 +157,32 @@ test('current compatibility fixtures discover the intended development command',
   const dockerRoot = await temporaryDirectory('multiprise-docker')
   await fs.writeFile(path.join(dockerRoot, 'compose.yml'), 'services: {}')
   assert.equal((await scanner.detectProject(dockerRoot, dockerRoot)).suggested_command, 'docker compose up -d --build')
+})
+
+test('startup reconciliation replaces removed nested services with the current root package', async () => {
+  const root = await temporaryDirectory('multiprise-reconcile-root')
+  const data = await temporaryDirectory('multiprise-reconcile-data')
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+    scripts: { dev: 'nuxt dev' },
+    dependencies: { nuxt: '^4.0.0' }
+  }))
+  process.env.MULTIPRISE_DATA_DIR = data
+  const { normalizeProjects } = require('../dist/state.js')
+  const state = {
+    settings: { auto_port: true, auto_install: true, port_base: 3000, startup_timeout_ms: 20000, scan_depth: 8, scan_ignore: [], theme: 'dark' },
+    scans: new Map(),
+    projects: [
+      { id: 'old-api', name: 'api', path: path.join(root, 'apps/api'), root_path: root, tags: [], command: 'npm run start:dev', command_source: 'auto', kind: 'command', role: 'backend', created_at: new Date().toISOString() },
+      { id: 'old-web', name: 'web', path: path.join(root, 'apps/web'), root_path: root, tags: [], command: 'npm run dev', command_source: 'auto', kind: 'command', role: 'frontend', port: 4836, created_at: new Date().toISOString() }
+    ]
+  }
+
+  await normalizeProjects(state)
+  assert.equal(state.projects.length, 1)
+  assert.equal(state.projects[0].id, 'old-web')
+  assert.equal(state.projects[0].path, root)
+  assert.equal(state.projects[0].framework, 'nuxt')
+  assert.equal(state.projects[0].port, 4836)
 })
 
 test('an edited command wins while auto commands continue following detection', async () => {

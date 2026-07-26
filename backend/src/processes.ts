@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import fs from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { classifyStartupFailure, failureMessage } from './failures'
 import { assertCommandAvailable } from './runtime'
@@ -152,6 +153,11 @@ export async function startProcess(options: {
   const { id, command, cwd, env, port, timeoutMs = 20000, onExit } = options
   if (processes.has(id)) throw new Error('Process already running')
 
+  const cwdStats = await fs.stat(cwd).catch(() => null)
+  if (!cwdStats?.isDirectory()) {
+    throw new Error(`Service folder no longer exists: ${cwd}. Refresh or re-add the project so Multiprise can discover its current services.`)
+  }
+
   const processEnv = { ...process.env, ...(env ?? {}) }
   assertCommandAvailable(command, processEnv)
   const child = spawn(command, {
@@ -185,6 +191,15 @@ export async function startProcess(options: {
 
   let exited = false
   let exitCode: number | null = null
+  let spawnErrorMessage = ''
+  child.once('error', (err) => {
+    // Failed spawns emit asynchronously; consume them so Electron never shows a native crash dialog.
+    spawnErrorMessage = err.message
+    exited = true
+    managed.failureLocked = true
+    processes.delete(id)
+    appendProcessLog(id, 'stderr', `Unable to start process: ${err.message}`)
+  })
   child.stdout.on('data', (data) => {
     managed.stdoutBuffer = flushBuffer(id, 'stdout', managed.stdoutBuffer + data.toString())
   })
@@ -235,7 +250,7 @@ export async function startProcess(options: {
     })
     return managed
   } catch (err) {
-    const raw = `${err instanceof Error ? err.message : 'Startup failed'}\n${outputFor(id)}`
+    const raw = `${spawnErrorMessage || (err instanceof Error ? err.message : 'Startup failed')}\n${outputFor(id)}`
     const failure = classifyStartupFailure(raw, `Service exited during startup with code ${exitCode ?? 'unknown'}.`, port)
     const message = failureMessage(failure)
     managed.failureLocked = true
