@@ -48,7 +48,7 @@ const renderLoadingPage = (window, message) => {
         :root { color-scheme: light; }
         html, body { height: 100%; margin: 0; background: #f3f4f6; color: #252529; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         .wrap { height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }
-        .spinner { width: 28px; height: 28px; border-radius: 999px; border: 3px solid #d9dbe0; border-top-color: #3b82f6; animation: spin 0.9s linear infinite; }
+        .spinner { width: 28px; height: 28px; border-radius: 999px; border: 3px solid #d9dbe0; border-top-color: #EA580C; animation: spin 0.9s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
       </style>
     </head>
@@ -75,19 +75,18 @@ const renderSplashPage = (window) => {
         :root { color-scheme: light; }
         html, body { height: 100%; margin: 0; background: #f3f4f6; color: #252529; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
         .wrap { height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; }
-        .spinner { width: 18px; height: 18px; border-radius: 999px; border: 2px solid #d9dbe0; border-top-color: #3b82f6; animation: spin 0.9s linear infinite; }
-        .mark { position: relative; width: 56px; height: 42px; border-radius: 15px; background: #ece4cc; display: flex; align-items: center; justify-content: space-around; padding: 0 8px; box-sizing: border-box; }
-        .socket { position: relative; width: 14px; height: 14px; border: 2px solid #6a6252; border-radius: 999px; }
-        .socket::before, .socket::after { position: absolute; top: 3px; width: 2px; height: 5px; content: ''; border-radius: 2px; background: #49443d; }
-        .socket::before { left: 3px; } .socket::after { right: 3px; }
-        .light { position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 999px; background: #3b82f6; }
+        .spinner { width: 18px; height: 18px; border-radius: 999px; border: 2px solid #d9dbe0; border-top-color: #EA580C; animation: spin 0.9s linear infinite; }
+        .mark { position: relative; width: 58px; height: 58px; border: 1.5px solid #FDBA74; border-radius: 18px; background: #FFF7ED; display: flex; align-items: center; justify-content: center; color: #EA580C; box-sizing: border-box; }
+        .strip { width: 34px; height: 20px; border: 2.5px solid currentColor; border-radius: 7px; display: flex; align-items: center; justify-content: space-evenly; box-sizing: border-box; }
+        .slot { width: 2.5px; height: 9px; border-radius: 2px; background: currentColor; }
+        .light { position: absolute; top: 7px; right: 7px; width: 5px; height: 5px; border-radius: 999px; background: #F97316; }
         .title { font-family: 'Avenir Next', 'Segoe UI', sans-serif; font-size: 22px; font-weight: 600; letter-spacing: -.03em; }
         @keyframes spin { to { transform: rotate(360deg); } }
       </style>
     </head>
     <body>
       <div class="wrap">
-        <div class="mark"><span class="socket"></span><span class="socket"></span><span class="socket"></span><span class="light"></span></div>
+        <div class="mark"><span class="strip"><span class="slot"></span><span class="slot"></span><span class="slot"></span></span><span class="light"></span></div>
         <div class="title">multiprise</div>
         <div class="spinner"></div>
       </div>
@@ -551,6 +550,7 @@ const destroyBrowserTabs = () => {
 const createWindow = () => {
   mainWindow = new BrowserWindow({
     title: 'multiprise',
+    icon: path.join(__dirname, 'build', 'icon.png'),
     width: 1280,
     height: 820,
     backgroundColor: '#f3f4f6',
@@ -579,6 +579,10 @@ const createWindow = () => {
 };
 
 app.whenReady().then(async () => {
+  const iconPath = path.join(__dirname, 'build', 'icon.png');
+  if (process.platform === 'darwin' && app.dock && fs.existsSync(iconPath)) {
+    app.dock.setIcon(iconPath);
+  }
   await hydrateShellPath();
   if (app.isPackaged) {
     process.env.MULTIPRISE_DATA_DIR = path.join(app.getPath('userData'), 'data');

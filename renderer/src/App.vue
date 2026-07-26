@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import multipriseIconUrl from './assets/multiprise-icon.svg'
 
 type ProjectKind = 'command' | 'docker_compose'
 type ProcessPhase = 'stopped' | 'starting' | 'ready' | 'failed'
@@ -2695,12 +2696,7 @@ watch(
             @click="goHome"
             title="Home"
           >
-            <span class="brand-strip relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-[#FDBA74] bg-[#FFF7ED] text-[#EA580C]">
-              <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7">
-                <rect x="4" y="7" width="16" height="10" rx="3" />
-                <path d="M8 10v4M12 10v4M16 10v4" stroke-linecap="round" />
-              </svg>
-            </span>
+            <img :src="multipriseIconUrl" alt="" class="h-8 w-8 shrink-0" />
             <span>
               <span class="block truncate text-[16px] font-semibold tracking-[-0.025em] text-[var(--text-strong)]">multiprise</span>
             </span>
@@ -4053,17 +4049,6 @@ watch(
   --input-placeholder: #85858C;
   --chip-active-bg: #474747;
   --danger-bg: #4A302D;
-}
-
-.brand-strip::after {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 4px;
-  height: 4px;
-  content: "";
-  border-radius: 999px;
-  background: var(--electric);
 }
 
 .powered-service {

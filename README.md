@@ -1,4 +1,7 @@
-# multiprise
+<p align="center">
+  <img src="renderer/src/assets/multiprise-icon.svg" width="112" height="112" alt="Multiprise logo" />
+</p>
+<h1 align="center">multiprise</h1>
 
 Multiprise is a macOS desktop control center for developers who run several local projects at once. It tracks projects, launches their services, assigns collision-free ports, captures logs, shows process ownership, and opens running apps in either the system browser or a tabbed in-app browser.
 
