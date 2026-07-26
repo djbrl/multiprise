@@ -454,6 +454,7 @@ const instancesLoading = ref(false)
 const actionLoading = reactive<Record<string, boolean>>({})
 const usedPorts = ref<UsedPort[]>([])
 const portsLoading = ref(false)
+const portsRefreshing = ref(false)
 const portsError = ref('')
 const groupMenuOpen = ref(false)
 const groupMenuX = ref(0)
@@ -572,13 +573,121 @@ const sidebarThemeStyle = computed(() => {
   }
 })
 
-const refreshMs = 2500
+const refreshMs = 2000
+const telemetryRefreshMs = 750
+const portsRefreshMs = 2000
 let refreshTimer: number | undefined
+let telemetryTimer: number | undefined
+let lastPortsRefreshAt = 0
+const documentVisible = ref(!document.hidden)
 const SETTINGS_STORAGE_KEY = 'multiprise_settings'
 const THEME_STORAGE_VERSION_KEY = 'multiprise_theme_v2'
 const SELECTED_GROUP_STORAGE_KEY = 'multiprise_selected_group'
 const NAVIGATION_SESSION_KEY = 'multiprise_navigation_session'
 const RECENT_SCAN_STORAGE_KEY = 'multiprise_recent_scan'
+const SERVICE_SPLIT_STORAGE_KEY = 'multiprise_service_split_ratio'
+
+const servicesPaneCollapsed = ref(false)
+const serviceSplitRatio = ref(0.38)
+const splitContainerWidth = ref(0)
+const projectSplitRef = ref<HTMLElement | null>(null)
+let projectSplitResizeObserver: ResizeObserver | undefined
+let splitDragging = false
+
+function constrainedServiceWidth(totalWidth: number) {
+  const dividerWidth = 10
+  const available = Math.max(0, totalWidth - dividerWidth)
+  const minimumServices = Math.min(280, available * 0.42)
+  const minimumFocus = Math.min(480, Math.max(0, available - minimumServices))
+  const maximumServices = Math.max(minimumServices, available - minimumFocus)
+  return Math.min(maximumServices, Math.max(minimumServices, available * serviceSplitRatio.value))
+}
+
+const projectSplitStyle = computed(() => {
+  if (servicesPaneCollapsed.value) {
+    return { gridTemplateColumns: '0px 0px minmax(0, 1fr)' }
+  }
+  const width = splitContainerWidth.value || 1000
+  return { gridTemplateColumns: `${Math.round(constrainedServiceWidth(width))}px 10px minmax(0, 1fr)` }
+})
+
+function saveServiceSplitRatio() {
+  try {
+    localStorage.setItem(SERVICE_SPLIT_STORAGE_KEY, String(serviceSplitRatio.value))
+  } catch (err) {
+    // Layout persistence is optional.
+  }
+}
+
+function loadServiceSplitRatio() {
+  try {
+    const stored = Number(localStorage.getItem(SERVICE_SPLIT_STORAGE_KEY))
+    if (Number.isFinite(stored) && stored >= 0.2 && stored <= 0.7) {
+      serviceSplitRatio.value = stored
+    }
+  } catch (err) {
+    // Use the default split when storage is unavailable.
+  }
+}
+
+function updateProjectSplitWidth() {
+  splitContainerWidth.value = projectSplitRef.value?.getBoundingClientRect().width ?? 0
+}
+
+function observeProjectSplit() {
+  projectSplitResizeObserver?.disconnect()
+  if (!projectSplitRef.value) return
+  updateProjectSplitWidth()
+  projectSplitResizeObserver = new ResizeObserver(updateProjectSplitWidth)
+  projectSplitResizeObserver.observe(projectSplitRef.value)
+}
+
+function handleServiceResize(event: PointerEvent) {
+  if (!splitDragging || !projectSplitRef.value) return
+  const rect = projectSplitRef.value.getBoundingClientRect()
+  if (rect.width <= 0) return
+  const requested = Math.max(0, event.clientX - rect.left)
+  const dividerWidth = 10
+  const available = Math.max(1, rect.width - dividerWidth)
+  const minimumServices = Math.min(280, available * 0.42)
+  const minimumFocus = Math.min(480, Math.max(0, available - minimumServices))
+  const maximumServices = Math.max(minimumServices, available - minimumFocus)
+  const width = Math.min(maximumServices, Math.max(minimumServices, requested))
+  serviceSplitRatio.value = width / available
+}
+
+function stopServiceResize() {
+  if (!splitDragging) return
+  splitDragging = false
+  document.body.classList.remove('resizing-project-panes')
+  window.removeEventListener('pointermove', handleServiceResize)
+  window.removeEventListener('pointerup', stopServiceResize)
+  window.removeEventListener('pointercancel', stopServiceResize)
+  saveServiceSplitRatio()
+  syncBrowserBounds()
+}
+
+function startServiceResize(event: PointerEvent) {
+  if (servicesPaneCollapsed.value) return
+  event.preventDefault()
+  splitDragging = true
+  document.body.classList.add('resizing-project-panes')
+  window.addEventListener('pointermove', handleServiceResize)
+  window.addEventListener('pointerup', stopServiceResize)
+  window.addEventListener('pointercancel', stopServiceResize)
+}
+
+function resetServiceSplit() {
+  serviceSplitRatio.value = 0.38
+  saveServiceSplitRatio()
+}
+
+async function toggleServicesPane() {
+  servicesPaneCollapsed.value = !servicesPaneCollapsed.value
+  await nextTick()
+  updateProjectSplitWidth()
+  syncBrowserBounds()
+}
 
 const folderGroups = computed(() => groupByFolder(projects.value, (item) => projectRootPath(item)))
 const filteredFolderGroups = computed(() => {
@@ -1972,14 +2081,21 @@ async function killInstance(project: ProjectView, pid: number) {
   }
 }
 
+function logsMatch(current: LogLine[], incoming: LogLine[]) {
+  if (current.length !== incoming.length) return false
+  return current.every((entry, index) => {
+    const candidate = incoming[index]
+    return candidate && entry.timestamp === candidate.timestamp && entry.stream === candidate.stream && entry.line === candidate.line
+  })
+}
+
 async function fetchLogs(id: string) {
   try {
     const response = await apiFetch(`/api/projects/${id}/logs?tail=200`)
-    if (!response.ok) {
-      return
-    }
+    if (!response.ok) return
     const data = (await response.json()) as { logs: LogLine[] }
-    logs[id] = data.logs
+    const current = logs[id] ?? []
+    if (!logsMatch(current, data.logs)) logs[id] = data.logs
   } catch (err) {
     return
   }
@@ -1989,9 +2105,7 @@ async function refreshSelectedLogs() {
   if (!selectedGroup.value || logsRefreshing.value) return
   logsRefreshing.value = true
   try {
-    for (const service of selectedGroup.value.items) {
-      await fetchLogs(service.project.id)
-    }
+    await Promise.all(selectedGroup.value.items.map((service) => fetchLogs(service.project.id)))
   } finally {
     logsRefreshing.value = false
   }
@@ -2221,20 +2335,30 @@ function restoreSelectedGroup(groups: Group<ProjectView>[]) {
   projectsExpanded.value = true
 }
 
-async function fetchUsedPorts() {
+function usedPortsMatch(current: UsedPort[], incoming: UsedPort[]) {
+  if (current.length !== incoming.length) return false
+  return current.every((entry, index) => {
+    const candidate = incoming[index]
+    return candidate && entry.port === candidate.port && entry.pid === candidate.pid && entry.project_id === candidate.project_id && entry.source === candidate.source
+  })
+}
+
+async function fetchUsedPorts(options: { silent?: boolean } = {}) {
+  if (portsRefreshing.value) return
+  portsRefreshing.value = true
   portsError.value = ''
-  portsLoading.value = true
+  if (!options.silent) portsLoading.value = true
   try {
     const response = await apiFetch('/api/ports/used')
-    if (!response.ok) {
-      throw new Error('Failed to load ports')
-    }
+    if (!response.ok) throw new Error('Failed to load ports')
     const data = (await response.json()) as { ports: UsedPort[] }
-    usedPorts.value = data.ports
+    if (!usedPortsMatch(usedPorts.value, data.ports)) usedPorts.value = data.ports
+    lastPortsRefreshAt = Date.now()
   } catch (err) {
     portsError.value = err instanceof Error ? err.message : 'Unknown error'
   } finally {
-    portsLoading.value = false
+    portsRefreshing.value = false
+    if (!options.silent) portsLoading.value = false
   }
 }
 
@@ -2413,6 +2537,8 @@ watch(
 
 watch(selectedGroupKey, async (key, previousKey) => {
   saveSelectedGroupToStorage(key)
+  await nextTick()
+  observeProjectSplit()
   if (key !== previousKey) projectPanelMode.value = 'logs'
   if (!key) return
   logsPinnedToBottom.value = true
@@ -2444,12 +2570,34 @@ function handleWindowKeydown(event: KeyboardEvent) {
   }
 }
 
+async function refreshLiveTelemetry() {
+  if (document.hidden || projects.value.length === 0) return
+  if (selectedGroup.value) await refreshSelectedLogs()
+  if (Date.now() - lastPortsRefreshAt >= portsRefreshMs) {
+    await fetchUsedPorts({ silent: true })
+  }
+}
+
+async function handleVisibilityChange() {
+  documentVisible.value = !document.hidden
+  if (!documentVisible.value) return
+  await Promise.all([loadProjects(), refreshSelectedLogs(), fetchUsedPorts({ silent: true })])
+  await nextTick()
+  syncBrowserBounds()
+}
+
 async function startAutoRefresh() {
-  if (refreshTimer || projects.value.length === 0) return
-  refreshTimer = window.setInterval(async () => {
-    await checkHealth()
-    await loadProjects()
-  }, refreshMs)
+  if (projects.value.length === 0) return
+  if (!refreshTimer) {
+    refreshTimer = window.setInterval(async () => {
+      if (document.hidden) return
+      await checkHealth()
+      await loadProjects()
+    }, refreshMs)
+  }
+  if (!telemetryTimer) {
+    telemetryTimer = window.setInterval(refreshLiveTelemetry, telemetryRefreshMs)
+  }
 }
 
 function stopAutoRefresh() {
@@ -2457,10 +2605,15 @@ function stopAutoRefresh() {
     window.clearInterval(refreshTimer)
     refreshTimer = undefined
   }
+  if (telemetryTimer) {
+    window.clearInterval(telemetryTimer)
+    telemetryTimer = undefined
+  }
 }
 
 onMounted(async () => {
   initializeNavigationSession()
+  loadServiceSplitRatio()
   await ensureApiBase()
   loadSettingsFromStorage()
   await syncSettingsToBackend()
@@ -2486,6 +2639,10 @@ onMounted(async () => {
   window.addEventListener('keydown', handleWindowKeydown)
   window.addEventListener('resize', closeGroupMenu)
   window.addEventListener('resize', syncBrowserBounds)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  await nextTick()
+  observeProjectSplit()
+  await refreshLiveTelemetry()
 })
 
 onBeforeUnmount(() => {
@@ -2493,12 +2650,15 @@ onBeforeUnmount(() => {
   clearScanTimer()
   if (copiedServiceUrlTimer) window.clearTimeout(copiedServiceUrlTimer)
   browserResizeObserver?.disconnect()
+  projectSplitResizeObserver?.disconnect()
+  stopServiceResize()
   stopBrowserStateListener?.()
   window.vibe?.browser?.hide()
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleWindowKeydown)
   window.removeEventListener('resize', closeGroupMenu)
   window.removeEventListener('resize', syncBrowserBounds)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 watch(
@@ -2841,19 +3001,36 @@ watch(
                 </div>
 
                 <div class="flex-1 min-h-0 overflow-hidden">
-                  <div class="grid h-full min-h-0 lg:grid-cols-[minmax(300px,38%)_minmax(0,1fr)]">
-                    <div class="relative flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4" :class="noScrollbar">
+                  <div
+                    ref="projectSplitRef"
+                    class="project-split grid h-full min-h-0 overflow-hidden transition-[grid-template-columns] duration-150 ease-out"
+                    :style="projectSplitStyle"
+                  >
+                    <div
+                      v-show="!servicesPaneCollapsed"
+                      class="relative flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-y-auto p-4"
+                      :class="noScrollbar"
+                    >
                       <div class="rounded-2xl bg-[var(--panel-bg)] p-3">
-                        <div class="relative flex items-start justify-between gap-3">
+                        <div class="relative flex items-center justify-between gap-3">
                           <div class="flex items-center gap-2">
                             <svg viewBox="0 0 24 24" class="h-4 w-4 text-[var(--text-subtle)]" fill="none" stroke="currentColor" stroke-width="1.5">
                               <path d="M5 6h14v4H5z" stroke-linecap="round" stroke-linejoin="round" />
                               <path d="M5 14h14v4H5z" stroke-linecap="round" stroke-linejoin="round" />
                             </svg>
-                            <div>
-                              <p class="text-[15px] font-semibold text-[var(--text-strong)]">Services</p>
-                            </div>
+                            <p class="text-[15px] font-semibold text-[var(--text-strong)]">Services</p>
                           </div>
+                          <button
+                            type="button"
+                            class="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[var(--text-subtle)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text-strong)]"
+                            title="Collapse services"
+                            aria-label="Collapse services"
+                            @click="toggleServicesPane"
+                          >
+                            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6">
+                              <path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                          </button>
                         </div>
                         <div class="mt-3 space-y-2">
                           <div v-if="npmServices.length === 0" class="text-sm text-[var(--text-subtle)]">
@@ -3194,10 +3371,35 @@ watch(
 
                     </div>
 
-                    <div class="flex h-full min-h-0 flex-col p-4">
+                    <button
+                      v-show="!servicesPaneCollapsed"
+                      type="button"
+                      class="group relative z-10 flex h-full min-h-0 cursor-col-resize touch-none items-center justify-center outline-none"
+                      title="Drag to resize · Double-click to reset"
+                      aria-label="Resize services and output panels"
+                      @pointerdown="startServiceResize"
+                      @dblclick="resetServiceSplit"
+                    >
+                      <span class="h-10 w-1 rounded-full bg-[var(--border)] transition-colors group-hover:bg-[var(--primary)]"></span>
+                    </button>
+
+                    <div class="flex h-full min-h-0 min-w-0 flex-col p-4">
                       <div class="focus-panel relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-[#343434] p-4">
                         <div class="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 pb-3">
-                          <div class="flex items-center rounded-lg bg-black/15 p-1" role="tablist" aria-label="Project output">
+                          <div class="flex min-w-0 items-center gap-2">
+                            <button
+                              v-if="servicesPaneCollapsed"
+                              type="button"
+                              class="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[11px] font-medium text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+                              title="Show services"
+                              @click="toggleServicesPane"
+                            >
+                              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6">
+                                <path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
+                              </svg>
+                              Services
+                            </button>
+                            <div class="flex items-center rounded-lg bg-black/15 p-1" role="tablist" aria-label="Project output">
                             <button
                               class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
                               :class="projectPanelMode === 'logs' ? 'bg-white/12 text-white' : 'text-white/55 hover:text-white'"
@@ -3213,8 +3415,12 @@ watch(
                               Browser
                               <span v-if="browserState.tabs.length" class="rounded bg-white/10 px-1.5 py-0.5 text-[9px] text-white/70">{{ browserState.tabs.length }}</span>
                             </button>
+                            </div>
                           </div>
-                          <span v-if="projectPanelMode === 'logs'" class="text-[11px] text-white/45">{{ selectedLogLines.length }} lines</span>
+                          <span v-if="projectPanelMode === 'logs'" class="flex items-center gap-2 text-[11px] text-white/45">
+                            <span class="h-1.5 w-1.5 rounded-full bg-[var(--live)]" :class="documentVisible ? 'animate-pulse' : 'opacity-40'"></span>
+                            {{ documentVisible ? 'Live' : 'Paused' }} · {{ selectedLogLines.length }} lines
+                          </span>
                           <span v-else-if="activeBrowserTab?.detached" class="text-[11px] text-white/45">Detached window</span>
                         </div>
 
@@ -3731,6 +3937,16 @@ watch(
 <style scoped>
 .app-drag-region {
   -webkit-app-region: drag;
+}
+
+:global(body.resizing-project-panes),
+:global(body.resizing-project-panes *) {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+:global(body.resizing-project-panes) .project-split {
+  transition: none !important;
 }
 
 .fade-enter-active,
