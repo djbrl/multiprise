@@ -14,11 +14,11 @@ async function temporaryDirectory(prefix) {
   return fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-`))
 }
 
-async function freePort() {
+async function freePort(host = '127.0.0.1') {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
     server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, host, () => {
       const address = server.address()
       const port = typeof address === 'object' && address ? address.port : null
       server.close(() => resolve(port))
@@ -90,6 +90,26 @@ test('a managed process is only ready after its port accepts connections', async
   const port = await freePort()
   await fs.writeFile(path.join(root, 'server.cjs'), "const net=require('net');setTimeout(()=>net.createServer(()=>{}).listen(Number(process.argv[2]),'127.0.0.1'),250)")
   const id = 'fixture-ready'
+
+  await processes.startProcess({ id, command: `node server.cjs ${port}`, cwd: root, port, timeoutMs: 3000 })
+  const status = processes.getProcessStatus(id)
+  assert.equal(status.phase, 'ready')
+  assert.equal(status.ready, true)
+  await processes.stopProcess(id)
+  assert.equal(processes.getProcessStatus(id).phase, 'stopped')
+})
+
+test('an IPv6-loopback-only service is accepted as ready', async (context) => {
+  const root = await temporaryDirectory('multiprise-ready-ipv6')
+  let port
+  try {
+    port = await freePort('::1')
+  } catch (error) {
+    context.skip('IPv6 loopback is unavailable on this host')
+    return
+  }
+  await fs.writeFile(path.join(root, 'server.cjs'), "const net=require('net');setTimeout(()=>net.createServer(()=>{}).listen(Number(process.argv[2]),'::1'),250)")
+  const id = 'fixture-ready-ipv6'
 
   await processes.startProcess({ id, command: `node server.cjs ${port}`, cwd: root, port, timeoutMs: 3000 })
   const status = processes.getProcessStatus(id)

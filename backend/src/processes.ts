@@ -7,6 +7,7 @@ import { type LogLine, type ProcessStatus } from './types'
 
 const MAX_LOG_LINES = 500
 const EARLY_EXIT_WINDOW_MS = 1200
+const LOOPBACK_HOSTS = ['127.0.0.1', '::1'] as const
 
 type ManagedProcess = {
   child: ChildProcessWithoutNullStreams
@@ -93,9 +94,9 @@ export function isProcessRunning(id: string): boolean {
   return processes.has(id)
 }
 
-function canConnect(port: number) {
+function canConnect(host: string, port: number) {
   return new Promise<boolean>((resolve) => {
-    const socket = createConnection({ host: '127.0.0.1', port })
+    const socket = createConnection({ host, port })
     const finish = (value: boolean) => {
       socket.removeAllListeners()
       socket.destroy()
@@ -125,7 +126,8 @@ async function waitForReadiness(options: {
 
   while (Date.now() - started < timeoutMs) {
     if (hasExited()) throw new Error('Process exited during startup')
-    if (await canConnect(port)) return
+    const loopbackResults = await Promise.all(LOOPBACK_HOSTS.map((host) => canConnect(host, port)))
+    if (loopbackResults.some(Boolean)) return
     await new Promise((resolve) => setTimeout(resolve, 150))
   }
   throw new Error(`Readiness timeout on port ${port}`)
