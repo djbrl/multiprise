@@ -3199,9 +3199,10 @@ onBeforeUnmount(() => {
                     class="project-split grid h-full min-h-0 overflow-hidden transition-[grid-template-columns] duration-150 ease-out"
                     :style="projectSplitStyle"
                   >
+                    <!-- Explicit columns: v-show's display:none would otherwise shift the panes into the collapsed 0px tracks. -->
                     <div
                       v-show="!servicesPaneCollapsed"
-                      class="relative flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-y-auto p-4"
+                      class="relative col-start-1 row-start-1 flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-y-auto p-4"
                       :class="noScrollbar"
                     >
                       <div class="rounded-2xl bg-[var(--panel-bg)] p-3">
@@ -3617,7 +3618,7 @@ onBeforeUnmount(() => {
                     <button
                       v-show="!servicesPaneCollapsed"
                       type="button"
-                      class="group relative z-10 flex h-full min-h-0 cursor-col-resize touch-none items-center justify-center outline-none"
+                      class="group relative z-10 col-start-2 row-start-1 flex h-full min-h-0 cursor-col-resize touch-none items-center justify-center outline-none"
                       title="Drag to resize · Double-click to reset"
                       aria-label="Resize services and output panels"
                       @pointerdown="startServiceResize"
@@ -3626,7 +3627,7 @@ onBeforeUnmount(() => {
                       <span class="h-10 w-1 rounded-full bg-[var(--border)] transition-colors group-hover:bg-[var(--primary)]"></span>
                     </button>
 
-                    <div class="flex h-full min-h-0 min-w-0 flex-col p-4">
+                    <div class="col-start-3 row-start-1 flex h-full min-h-0 min-w-0 flex-col p-4">
                       <div class="focus-panel relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-[#343434] p-4">
                         <div class="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 pb-3">
                           <div class="flex min-w-0 items-center gap-2">
