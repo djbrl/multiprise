@@ -13,13 +13,18 @@ const preferredPort = parsePort(explicitPortValue) ?? 3000
 const main = async () => {
   const backend = await startServer({
     port: preferredPort,
-    strictPort: Boolean(explicitPortValue)
+    strictPort: Boolean(explicitPortValue),
+    token: process.env.MULTIPRISE_API_TOKEN
   })
 
   console.log(`Multiprise backend listening on ${backend.url}`)
+  console.log(`API token (send as the x-multiprise-token header): ${backend.token}`)
 
+  let stopping = false
   const shutdown = async () => {
-    await stopServer(backend)
+    if (stopping) return
+    stopping = true
+    await stopServer(backend).catch((err) => console.error(err))
     process.exit(0)
   }
 

@@ -28,7 +28,7 @@ declare global {
   interface Window {
     vibe?: {
       ping?: () => Promise<{ ok: boolean; time: string }>
-      backendHealth?: () => Promise<{ ok: boolean; url: string | null; port: number | null; time: string }>
+      backendHealth?: () => Promise<{ ok: boolean; url: string | null; port: number | null; token?: string | null; time: string }>
       openExternal?: (url: string) => Promise<void>
       copyText?: (text: string) => Promise<{ ok: boolean }>
       browser?: {

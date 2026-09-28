@@ -110,6 +110,7 @@ type ProcessInstance = {
   command?: string | null
   source: ProcessSource
   cwd?: string | null
+  reason?: 'assigned-port' | 'startup-conflict'
 }
 
 type UsedPort = {
@@ -204,6 +205,7 @@ const hasLoadedOnce = ref(false)
 const error = ref('')
 const backendStatus = ref<'unknown' | 'online' | 'offline'>('unknown')
 const apiBase = ref('')
+const apiToken = ref('')
 const apiError = ref('')
 
 async function ensureApiBase() {
@@ -211,6 +213,7 @@ async function ensureApiBase() {
   try {
     const health = await window.vibe?.backendHealth?.()
     if (health?.url) {
+      apiToken.value = health.token ?? ''
       apiBase.value = health.url
     }
   } catch (err) {
@@ -225,7 +228,9 @@ async function apiFetch(path: string, options?: RequestInit) {
     throw new Error('Backend not available')
   }
   const url = `${base}${path}`
-  return fetch(url, options)
+  const headers = new Headers(options?.headers)
+  if (apiToken.value) headers.set('x-multiprise-token', apiToken.value)
+  return fetch(url, { ...options, headers })
 }
 
 async function openExternal(url: string) {
@@ -259,6 +264,7 @@ async function browserAction(action: string, payload?: Record<string, unknown>) 
 
 async function syncBrowserBounds() {
   if (activeSection.value !== 'projects' || projectPanelMode.value !== 'browser' || !browserViewportRef.value) return
+  if (overlayOpen.value) return
   const rect = browserViewportRef.value.getBoundingClientRect()
   if (rect.width < 1 || rect.height < 1) return
   const state = await window.vibe?.browser?.setBounds({
@@ -283,7 +289,10 @@ async function openInAppBrowser(item: ProjectView) {
   if (!url || !window.vibe?.browser) return
   activeSection.value = 'projects'
   projectPanelMode.value = 'browser'
-  const state = await window.vibe.browser.open(url, { title: `${projectTitle(item)} · ${item.project.name}` })
+  const projectName = folderLabel(projectRootPath(item))
+  const serviceName = projectTitle(item)
+  const title = projectName === serviceName ? serviceName : `${projectName} · ${serviceName}`
+  const state = await window.vibe.browser.open(url, { title })
   applyBrowserState(state)
   await nextTick()
   observeBrowserViewport()
@@ -307,6 +316,8 @@ async function closeBrowserTab(id: string) {
 async function navigateBrowser() {
   const value = browserAddress.value.trim()
   if (!value) return
+  // Leave the field so later tab updates show the resolved URL instead of being ignored.
+  ;(document.activeElement as HTMLElement | null)?.blur()
   browserAddressEditing.value = false
   await browserAction('navigate', { url: value })
 }
@@ -337,7 +348,7 @@ const actionErrors = reactive<Record<string, string>>({})
 const actionErrorTimers: Record<string, number> = {}
 const vscodeErrors = reactive<Record<string, string>>({})
 const vscodeErrorTimers: Record<string, number> = {}
-const groupActionLoading = reactive<Record<string, 'launch' | 'stop' | null>>({})
+const groupActionLoading = reactive<Record<string, 'launch' | 'stop' | 'delete' | null>>({})
 const copiedServiceUrlId = ref<string | null>(null)
 let copiedServiceUrlTimer: number | undefined
 const logsRefreshing = ref(false)
@@ -418,8 +429,9 @@ const chipBase =
 const chipActive =
   'border-2 border-[var(--text-strong)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)]'
 const statusDot = 'inline-flex h-2.5 w-2.5 shrink-0 rounded-full border border-[var(--status-border)] bg-[var(--status-bg)]'
-const statusDotLive = 'border-[var(--live)] bg-[var(--live)]'
-const statusDotFailed = 'border-[var(--log-error)] bg-[var(--log-error)]'
+// "!" so these win over statusDot's idle colours regardless of generated CSS order.
+const statusDotLive = '!border-[var(--live)] !bg-[var(--live)]'
+const statusDotFailed = '!border-[var(--log-error)] !bg-[var(--log-error)]'
 const inputBase =
   'w-full rounded-xl border border-[var(--input-border)] bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--input-text)] placeholder:text-[var(--input-placeholder)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]'
 const noScrollbar =
@@ -582,10 +594,10 @@ let telemetryTimer: number | undefined
 let lastPortsRefreshAt = 0
 const documentVisible = ref(!document.hidden)
 const SETTINGS_STORAGE_KEY = 'multiprise_settings'
-const THEME_STORAGE_VERSION_KEY = 'multiprise_theme_v2'
 const SELECTED_GROUP_STORAGE_KEY = 'multiprise_selected_group'
 const NAVIGATION_SESSION_KEY = 'multiprise_navigation_session'
 const RECENT_SCAN_STORAGE_KEY = 'multiprise_recent_scan'
+const RECENT_GROUPS_STORAGE_KEY = 'multiprise_recent_groups'
 const SERVICE_SPLIT_STORAGE_KEY = 'multiprise_service_split_ratio'
 
 const servicesPaneCollapsed = ref(false)
@@ -691,6 +703,20 @@ async function toggleServicesPane() {
 }
 
 const folderGroups = computed(() => groupByFolder(projects.value, (item) => projectRootPath(item)))
+const recentGroupKeys = ref<string[]>([])
+const homeProjectGroups = computed(() => {
+  const byKey = new Map(folderGroups.value.map((group) => [group.key, group]))
+  const ordered = recentGroupKeys.value
+    .map((key) => byKey.get(key))
+    .filter((group): group is Group<ProjectView> => !!group)
+  const recentKeys = new Set(ordered.map((group) => group.key))
+
+  for (const group of folderGroups.value) {
+    if (!recentKeys.has(group.key)) ordered.push(group)
+  }
+
+  return ordered.slice(0, 5)
+})
 const filteredFolderGroups = computed(() => {
   const query = projectSearch.value.trim().toLowerCase()
   if (!query) return folderGroups.value
@@ -905,12 +931,8 @@ function buildEnvForService(service: ProjectView) {
   if (!group) return {}
   const backendService = group.items.find((item) => serviceRole(item) === 'backend')
   const frontendService = group.items.find((item) => serviceRole(item) === 'frontend')
-  const backendPort = backendService
-    ? servicePort(backendService) ?? (effectivePort(backendService) ?? undefined)
-    : undefined
-  const frontendPort = frontendService
-    ? servicePort(frontendService) ?? (effectivePort(frontendService) ?? undefined)
-    : undefined
+  const backendPort = backendService ? linkedServicePort(backendService) : undefined
+  const frontendPort = frontendService ? linkedServicePort(frontendService) : undefined
   const env: Record<string, string> = {}
   if (backendPort) {
     env.BACKEND_PORT = String(backendPort)
@@ -919,6 +941,14 @@ function buildEnvForService(service: ProjectView) {
     env.FRONTEND_PORT = String(frontendPort)
   }
   return env
+}
+
+// The port a sibling service should be wired to: the one it is actually using when
+// running; otherwise the typed port only matters in manual mode.
+function linkedServicePort(item: ProjectView) {
+  if (item.status.running && item.project.port) return item.project.port
+  if (settings.auto_port) return item.project.port ?? undefined
+  return servicePort(item) ?? item.project.port ?? undefined
 }
 
 function effectivePort(item: ProjectView) {
@@ -1016,6 +1046,7 @@ function openPrimaryFrontend() {
 }
 
 function openDetails(group: Group<ProjectView>) {
+  rememberGroup(group.key)
   if (activeSection.value !== 'projects') {
     activeSection.value = 'projects'
   }
@@ -1233,27 +1264,31 @@ function groupByFolder<T>(items: T[], getPath: (item: T) => string): Group<T>[] 
   })
 
   const grouped = Array.from(groups.values())
-  grouped.sort((a, b) => a.path.localeCompare(b.path))
+  grouped.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }))
   grouped.forEach((group) => {
-    group.items.sort((a, b) => normalizePath(getPath(a)).localeCompare(normalizePath(getPath(b))))
+    group.items.sort((a, b) => normalizePath(getPath(a)).localeCompare(normalizePath(getPath(b)), undefined, { numeric: true }))
   })
   return grouped
 }
 
-const backendKeywords = ['backend', 'server', 'api']
-const frontendKeywords = ['frontend', 'client', 'web', 'app', 'ui']
+const backendKeywords = new Set(['backend', 'server', 'api'])
+const frontendKeywords = new Set(['frontend', 'client', 'web', 'app', 'ui'])
+
+// Words from the service's own folders (relative to its project root) and name.
+// Matching whole words avoids misreading parents like "~/capital" or "/Applications".
+function serviceRoleWords(item: ProjectView) {
+  const servicePath = normalizePath(item.project.path)
+  const rootPath = normalizePath(item.project.root_path ?? item.project.path)
+  const relative = servicePath.startsWith(`${rootPath}/`) ? servicePath.slice(rootPath.length + 1) : ''
+  return `${relative}/${projectTitle(item)}`.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+}
 
 function serviceRole(item: ProjectView): ServiceRole {
-  const path = item.project.path.toLowerCase()
-  const name = projectTitle(item).toLowerCase()
-  const haystack = `${path}/${name}`
-  if (backendKeywords.some((key) => haystack.includes(`/${key}`) || haystack.includes(key))) {
-    return 'backend'
-  }
-  if (frontendKeywords.some((key) => haystack.includes(`/${key}`) || haystack.includes(key))) {
-    return 'frontend'
-  }
-  if (item.project.role) return item.project.role
+  // Discovery already classified the service from its folder, framework and scripts.
+  if (item.project.role === 'backend' || item.project.role === 'frontend') return item.project.role
+  const words = serviceRoleWords(item)
+  if (words.some((word) => backendKeywords.has(word))) return 'backend'
+  if (words.some((word) => frontendKeywords.has(word))) return 'frontend'
   return 'service'
 }
 
@@ -1308,7 +1343,9 @@ function groupFaviconId(group: Group<ProjectView>) {
 
 function groupFaviconUrl(group: Group<ProjectView>) {
   const id = groupFaviconId(group)
-  return id && apiBase.value ? `${apiBase.value}/api/projects/${id}/favicon` : ''
+  return id && apiBase.value
+    ? `${apiBase.value}/api/projects/${id}/favicon?token=${encodeURIComponent(apiToken.value)}`
+    : ''
 }
 
 function handleFaviconError(id: string | null) {
@@ -1398,11 +1435,15 @@ function logServiceTone(entry: { role?: string }) {
 
 function logEntryLevel(entry: { stream?: string; line?: string }) {
   const line = entry.line ?? ''
-  if (entry.stream === 'stderr' || /\b(error|failed|failure|exception|fatal|eaddrinuse)\b/i.test(line)) {
-    return 'errors'
-  }
+  // Many tools log progress and warnings to stderr, so the stream alone doesn't make a line an error.
   if (/\b(warn|warning|deprecated|deprecation)\b/i.test(line)) {
     return 'warnings'
+  }
+  if (/\b(error|err!|failed|failure|exception|fatal|panic|eaddrinuse|exited|unable to|cannot)\b/i.test(line)) {
+    return 'errors'
+  }
+  if (entry.stream === 'stderr' && /^\s+at\s/.test(line)) {
+    return 'errors'
   }
   return 'all'
 }
@@ -1426,7 +1467,7 @@ function logLineTone(entry: { stream?: string; line?: string }) {
 
 function logRowTone(entry: { stream?: string; line?: string }) {
   if (logEntryLevel(entry) === 'errors') {
-    return 'border-l-[var(--log-error)] bg-[var(--danger-bg)]/35'
+    return 'border-l-[var(--log-error)] bg-[color-mix(in_srgb,var(--danger-bg)_35%,transparent)]'
   }
   if (logEntryLevel(entry) === 'warnings') {
     return 'border-l-[var(--log-warning)]'
@@ -1514,12 +1555,15 @@ async function checkHealth() {
   }
 }
 
+// Background polling must not wipe errors raised by user actions, so it only
+// clears the error it set itself.
+let projectsLoadError = ''
+
 async function loadProjects(options: { showLoading?: boolean } = {}) {
   const showLoading = options.showLoading ?? false
   if (showLoading || !hasLoadedOnce.value) {
     loading.value = true
   }
-  error.value = ''
   try {
     const response = await apiFetch('/api/projects')
     if (!response.ok) {
@@ -1563,11 +1607,11 @@ async function loadProjects(options: { showLoading?: boolean } = {}) {
         delete faviconFailed[id]
       }
     })
-    Object.keys(processInstances).forEach((id) => {
-      if (!projectIds.has(id)) {
-        delete processInstances[id]
-      }
-    })
+    for (const record of [processInstances, logs, detected, actionState] as Array<Record<string, unknown>>) {
+      Object.keys(record).forEach((id) => {
+        if (!projectIds.has(id)) delete record[id]
+      })
+    }
     Object.keys(actionLoading).forEach((key) => {
       const parts = key.split(':')
       const id = parts[1]
@@ -1576,8 +1620,14 @@ async function loadProjects(options: { showLoading?: boolean } = {}) {
       }
     })
     syncActionDefaults()
+    if (projectsLoadError && error.value === projectsLoadError) error.value = ''
+    projectsLoadError = ''
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Unknown error'
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    projectsLoadError = message === 'Failed to fetch' || message === 'Backend not available'
+      ? 'Cannot reach the Multiprise service manager. Retrying…'
+      : message
+    error.value = projectsLoadError
   } finally {
     loading.value = false
   }
@@ -1783,21 +1833,37 @@ async function addSelectedProjects() {
     }))
     updateRecentProjects(recentPayload)
 
+    // Add every folder even if one fails, and keep only the failures selected for a retry.
+    const failures: string[] = []
     for (const path of selected) {
-      const response = await apiFetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          path
-        }),
-      })
-      if (!response.ok) {
-        await throwResponseError(response, 'Failed to add project')
+      try {
+        const response = await apiFetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path
+          }),
+        })
+        if (!response.ok) {
+          await throwResponseError(response, 'Failed to add project')
+        }
+        removeSelectedFolder(path)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to add project'
+        if (message === 'Project already exists') {
+          removeSelectedFolder(path)
+          continue
+        }
+        failures.push(`${folderLabel(path)}: ${message}`)
       }
+    }
+    await loadProjects()
+    if (failures.length) {
+      error.value = `Could not add ${failures.length === 1 ? 'a folder' : `${failures.length} folders`} — ${failures.join('; ')}`
+      return
     }
     pickerOpen.value = false
     clearSelectedFolders()
-    await loadProjects()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Unknown error'
   } finally {
@@ -1976,6 +2042,8 @@ async function startProject(project: ProjectView, options: {
     setActionError(project.project.id, message)
     await loadProjects()
     await fetchLogs(project.project.id)
+    await fetchInstances(project)
+    await fetchUsedPorts({ silent: true })
     return false
   } finally {
     setActionLoading('start', project.project.id, false)
@@ -2048,7 +2116,6 @@ async function fetchInstances(project: ProjectView) {
 async function refreshSelectedInstances() {
   if (!selectedGroup.value || instancesLoading.value) return
   instancesLoading.value = true
-  error.value = ''
   try {
     for (const service of selectedGroup.value.items) {
       processInstances[service.project.id] = []
@@ -2062,21 +2129,26 @@ async function refreshSelectedInstances() {
 
 async function killInstance(project: ProjectView, pid: number) {
   error.value = ''
-  if (isActionLoading('kill', project.project.id, pid)) return
+  if (isActionLoading('kill', project.project.id, pid)) return false
   setActionLoading('kill', project.project.id, true, pid)
   try {
-    const response = await apiFetch(`/api/projects/${project.project.id}/process/kill`, {
+    const response = await apiFetch('/api/projects/' + project.project.id + '/process/kill', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pid }),
     })
     if (!response.ok) {
-      throw new Error('Failed to kill process')
+      await throwResponseError(response, 'Failed to unplug process')
     }
     await fetchInstances(project)
     await loadProjects()
+    await fetchUsedPorts({ silent: true })
+    return true
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Unknown error'
+    const message = err instanceof Error ? err.message : 'Unable to unplug process'
+    error.value = message
+    setActionError(project.project.id, message)
+    return false
   } finally {
     setActionLoading('kill', project.project.id, false, pid)
   }
@@ -2120,6 +2192,17 @@ function externalPrimaryInstance(service: ProjectView) {
   return externalInstancesFor(service)[0] ?? null
 }
 
+function startupConflictFor(service: ProjectView) {
+  return externalInstancesFor(service).find((instance) => instance.reason === 'startup-conflict') ?? null
+}
+
+function startupConflictSummary(service: ProjectView) {
+  const conflict = startupConflictFor(service)
+  if (!conflict) return ''
+  const location = conflict.port ? ':' + conflict.port : 'an unknown port'
+  return location + ' · PID ' + conflict.pid
+}
+
 function externalInstanceSummary(service: ProjectView) {
   const instances = externalInstancesFor(service)
   if (instances.length === 0) return ''
@@ -2144,6 +2227,20 @@ async function killExternalInstance(service: ProjectView) {
   const primary = externalPrimaryInstance(service)
   if (!primary?.pid) return
   await killInstance(service, primary.pid)
+}
+
+async function resolveStartupConflict(service: ProjectView) {
+  const conflict = startupConflictFor(service)
+  if (!conflict?.pid || isActionLoading('resolve-conflict', service.project.id, conflict.pid)) return
+
+  setActionLoading('resolve-conflict', service.project.id, true, conflict.pid)
+  try {
+    const unplugged = await killInstance(service, conflict.pid)
+    if (!unplugged) return
+    await startProject(service)
+  } finally {
+    setActionLoading('resolve-conflict', service.project.id, false, conflict.pid)
+  }
 }
 
 function formatPortSource(source: ProcessSource) {
@@ -2271,7 +2368,12 @@ async function stopGroup(group: Group<ProjectView>) {
 }
 
 async function deleteGroup(group: Group<ProjectView>) {
+  if (groupActionLoading[group.key]) return
+  const running = group.items.filter((service) => service.status.running).length
+  const warning = running ? `\n\n${running} running service${running === 1 ? ' will' : 's will'} be stopped.` : ''
+  if (!window.confirm(`Untrack ${group.name}?${warning}`)) return
   error.value = ''
+  groupActionLoading[group.key] = 'delete'
   let failed = 0
   try {
     for (const service of group.items) {
@@ -2285,6 +2387,7 @@ async function deleteGroup(group: Group<ProjectView>) {
   } catch (err) {
     failed += 1
   }
+  groupActionLoading[group.key] = null
   if (failed > 0) {
     error.value = `Failed to untrack ${failed} service${failed === 1 ? '' : 's'}.`
   }
@@ -2311,6 +2414,27 @@ function loadSelectedGroupFromStorage() {
     return localStorage.getItem(SELECTED_GROUP_STORAGE_KEY)
   } catch (err) {
     return null
+  }
+}
+
+function loadRecentGroupsFromStorage() {
+  try {
+    const raw = localStorage.getItem(RECENT_GROUPS_STORAGE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return
+    recentGroupKeys.value = parsed.filter((key): key is string => typeof key === 'string').slice(0, 8)
+  } catch (err) {
+    return
+  }
+}
+
+function rememberGroup(key: string) {
+  recentGroupKeys.value = [key, ...recentGroupKeys.value.filter((entry) => entry !== key)].slice(0, 8)
+  try {
+    localStorage.setItem(RECENT_GROUPS_STORAGE_KEY, JSON.stringify(recentGroupKeys.value))
+  } catch (err) {
+    return
   }
 }
 
@@ -2443,11 +2567,6 @@ function loadSettingsFromStorage() {
     if (!raw) return
     const parsed = JSON.parse(raw) as Partial<Settings>
     applySettingsPatch(parsed)
-    if (localStorage.getItem(THEME_STORAGE_VERSION_KEY) !== '1') {
-      settings.theme = 'light'
-      settingsDraft.theme = 'light'
-      localStorage.setItem(THEME_STORAGE_VERSION_KEY, '1')
-    }
   } catch (err) {
     return
   }
@@ -2456,18 +2575,6 @@ function loadSettingsFromStorage() {
 function saveSettingsToStorage() {
   try {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
-  } catch (err) {
-    return
-  }
-}
-
-async function syncSettingsToBackend() {
-  try {
-    await apiFetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
-    })
   } catch (err) {
     return
   }
@@ -2521,10 +2628,20 @@ watch(activeSection, async (section) => {
   if (section !== 'settings') syncSettingsDraftFromSettings()
 })
 
+// The native browser view always paints above the page, so it is hidden while
+// any modal or menu is open instead of covering it.
+const overlayOpen = computed(() =>
+  pickerOpen.value ||
+  !!manualPortTarget.value ||
+  groupMenuOpen.value ||
+  Object.values(externalMenuOpen).some(Boolean)
+)
+
 watch(
-  [activeSection, projectPanelMode, selectedGroupKey, () => activeBrowserTab.value?.detached],
+  [activeSection, projectPanelMode, selectedGroupKey, () => activeBrowserTab.value?.detached, overlayOpen],
   async ([section, panelMode]) => {
-    const shouldAttachView = section === 'projects' && panelMode === 'browser' && !!selectedGroupKey.value && !activeBrowserTab.value?.detached
+    const shouldAttachView = section === 'projects' && panelMode === 'browser' && !!selectedGroupKey.value &&
+      !activeBrowserTab.value?.detached && !overlayOpen.value
     if (shouldAttachView) {
       await nextTick()
       observeBrowserViewport()
@@ -2548,8 +2665,22 @@ watch(selectedGroupKey, async (key, previousKey) => {
   scrollLogsToBottom(true)
 })
 
+// A crash or exit changes which processes own the ports; refresh them so stale
+// "external instance" rows don't hide the Start action.
 watch(
-  () => selectedLogLines.value.length,
+  () => selectedGroup.value?.items.map((item) => `${item.project.id}:${item.status.phase}:${item.status.pid ?? ''}`).join('|') ?? '',
+  (current, previous) => {
+    if (previous && current !== previous) refreshSelectedInstances()
+  }
+)
+
+// The visible list is capped at 200 lines, so its length stops changing; track the newest entry.
+watch(
+  () => {
+    const lines = selectedLogLines.value
+    const newest = lines[lines.length - 1]
+    return `${lines.length}|${newest?.timestamp ?? ''}|${newest?.line ?? ''}`
+  },
   () => {
     scrollLogsToBottom()
   }
@@ -2588,7 +2719,6 @@ async function handleVisibilityChange() {
 }
 
 async function startAutoRefresh() {
-  if (projects.value.length === 0) return
   if (!refreshTimer) {
     refreshTimer = window.setInterval(async () => {
       if (document.hidden) return
@@ -2614,10 +2744,11 @@ function stopAutoRefresh() {
 
 onMounted(async () => {
   initializeNavigationSession()
+  loadRecentGroupsFromStorage()
   loadServiceSplitRatio()
   await ensureApiBase()
+  // The cached copy only avoids a theme flash; the backend's saved settings always win.
   loadSettingsFromStorage()
-  await syncSettingsToBackend()
   await fetchSettings()
   await checkHealth()
   await loadProjects({ showLoading: true })
@@ -2625,9 +2756,7 @@ onMounted(async () => {
   if (activePortsExpanded.value) {
     await fetchUsedPorts()
   }
-  if (projects.value.length > 0) {
-    await startAutoRefresh()
-  }
+  await startAutoRefresh()
   if (pickerOpen.value && selectedFolders.value.length) {
     await refreshProjectPreviews()
   }
@@ -2661,17 +2790,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', syncBrowserBounds)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
-
-watch(
-  () => projects.value.length,
-  (count) => {
-    if (count > 0) {
-      startAutoRefresh()
-    } else {
-      stopAutoRefresh()
-    }
-  }
-)
 </script>
 
 <template>
@@ -2712,7 +2830,7 @@ watch(
           </button>
         </div>
 
-        <nav v-if="!sidebarCollapsed" class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-3 pt-2" :class="noScrollbar">
+        <nav class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-3 pt-2" :class="sidebarCollapsed ? ['px-1', noScrollbar] : 'px-2'">
           <div v-if="!sidebarCollapsed" class="relative my-1">
             <svg viewBox="0 0 24 24" class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-subtle)]" fill="none" stroke="currentColor" stroke-width="1.5">
               <circle cx="11" cy="11" r="6" />
@@ -2851,7 +2969,11 @@ watch(
               @click="activeSection = 'settings'"
               title="Settings"
             >
-              <span :class="sidebarCollapsed ? 'w-full text-center' : ''">Settings</span>
+              <svg v-if="sidebarCollapsed" viewBox="0 0 24 24" class="mx-auto h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+              </svg>
+              <span v-else>Settings</span>
             </button>
           </div>
         </nav>
@@ -2860,57 +2982,125 @@ watch(
       <section class="flex h-full min-h-0 flex-col overflow-hidden">
         <div class="flex-1 min-h-0 overflow-hidden p-3">
           <div v-if="activeSection === 'home'" class="h-full min-h-0">
-            <div class="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl" :class="panelProjectClass">
-              <div class="flex flex-1 items-center justify-center px-8 py-10">
-                <div class="w-full max-w-2xl text-center">
-                  <div class="relative mx-auto h-40 w-full max-w-lg">
-                    <svg viewBox="0 0 520 160" class="absolute inset-0 h-full w-full overflow-visible" fill="none">
-                      <path d="M20 82C70 82 72 34 122 34H160" stroke="#A87767" stroke-width="5" stroke-linecap="round" />
-                      <path d="M20 112C84 112 94 134 158 134H190" stroke="#6F9C93" stroke-width="5" stroke-linecap="round" />
-                      <path d="M500 46C452 46 448 22 402 22H360" stroke="#8E83A6" stroke-width="5" stroke-linecap="round" />
-                      <path d="M500 118C444 118 440 142 386 142H352" stroke="#718FAE" stroke-width="5" stroke-linecap="round" />
-                      <path class="animate-current-flow" d="M20 82C70 82 72 34 122 34H160" stroke="var(--electric)" stroke-width="2" stroke-linecap="round" stroke-dasharray="8 14" />
-                      <path class="animate-current-flow" d="M500 118C444 118 440 142 386 142H352" stroke="var(--electric)" stroke-width="2" stroke-linecap="round" stroke-dasharray="8 14" />
-                    </svg>
-                    <div class="absolute left-1/2 top-1/2 flex h-28 w-64 -translate-x-1/2 -translate-y-1/2 items-center justify-around rounded-[28px] border border-[#F5E7B7] bg-[#ECE4CC] px-5">
-                      <div v-for="index in 4" :key="index" class="relative flex h-12 w-12 items-center justify-center rounded-full border-2 border-[#756D60] bg-[#D4CBB3]">
-                        <span class="absolute left-[13px] top-[11px] h-3 w-1.5 rounded-full bg-[#49443D]"></span>
-                        <span class="absolute right-[13px] top-[11px] h-3 w-1.5 rounded-full bg-[#49443D]"></span>
-                        <span class="absolute bottom-[8px] h-2 w-2 rounded-full bg-[#49443D]"></span>
-                      </div>
-                      <span class="absolute -right-2 top-4 h-4 w-4 rounded-full border-2 border-[#ECE4CC] bg-[var(--electric)]"></span>
-                    </div>
+            <div class="h-full min-h-0 overflow-y-auto rounded-2xl" :class="[panelProjectClass, noScrollbar]">
+              <div class="mx-auto grid min-h-full w-full max-w-[1380px] xl:grid-cols-[minmax(0,1.08fr)_minmax(390px,0.92fr)]">
+                <section class="flex min-h-[470px] flex-col justify-center border-b border-[var(--border)] px-8 py-12 sm:px-12 xl:border-b-0 xl:border-r xl:px-16 xl:py-16">
+                  <div class="max-w-2xl">
+                    <h1 class="max-w-xl text-[clamp(2.35rem,4vw,3.7rem)] font-semibold leading-[1.03] tracking-[-0.055em] text-[var(--text-strong)]">
+                      Run local projects without the port shuffle.
+                    </h1>
+                    <p class="mt-5 max-w-xl text-base leading-7 text-[var(--text-muted)]">
+                      Choose a project folder once. multiprise finds its services, assigns free ports, and keeps every process within reach.
+                    </p>
+                    <button
+                      class="mt-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel-project)]"
+                      :class="[btnPanelPrimaryLg, 'min-w-[156px]']"
+                      @click="openPicker"
+                    >
+                      <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path d="M12 5v14M5 12h14" stroke-linecap="round" />
+                      </svg>
+                      Add project
+                    </button>
                   </div>
-                  <h1 class="mt-3 text-3xl font-semibold tracking-[-0.035em] text-[var(--text-strong)]">
-                    Power every project from one strip.
-                  </h1>
-                  <p class="mx-auto mt-3 max-w-lg text-sm leading-6 text-[var(--text-muted)]">
-                    Plug in a project once. multiprise handles the scripts, ports, processes, and live current from there.
-                  </p>
-                  <button class="mt-6" :class="[btnPanelPrimaryLg, 'min-w-[168px]']" @click="openPicker">
-                    Add a new project
-                  </button>
 
-                  <div v-if="recentImportable.length" class="mx-auto mt-10 max-w-xl text-left">
-                    <p class="text-xs font-medium text-[var(--text-subtle)]">Recent projects</p>
-                    <div class="mt-2 grid gap-2 sm:grid-cols-3">
+                  <svg
+                    viewBox="0 0 620 150"
+                    class="mt-14 h-auto w-full max-w-[620px] text-[var(--border)]"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path d="M4 77H120" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M500 77H616" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path class="animate-current-flow" d="M4 77H120" stroke="var(--electric)" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 16" />
+                    <rect x="120" y="25" width="380" height="104" rx="30" fill="var(--panel-bg)" stroke="currentColor" stroke-width="2" />
+                    <g v-for="x in [176, 266, 356, 446]" :key="x" transform="translate(0 1)">
+                      <circle :cx="x" cy="76" r="29" fill="var(--panel-muted)" stroke="currentColor" stroke-width="2" />
+                      <rect :x="x - 10" y="62" width="5" height="14" rx="2.5" fill="var(--text-subtle)" />
+                      <rect :x="x + 5" y="62" width="5" height="14" rx="2.5" fill="var(--text-subtle)" />
+                      <circle :cx="x" cy="87" r="4" fill="var(--text-subtle)" />
+                    </g>
+                    <circle cx="484" cy="42" r="5" fill="var(--electric)" />
+                  </svg>
+                </section>
+
+                <section class="flex min-h-[470px] flex-col px-8 py-10 sm:px-12 xl:px-12 xl:py-14">
+                  <div>
+                    <h2 class="text-xl font-semibold tracking-[-0.025em] text-[var(--text-strong)]">
+                      {{ homeProjectGroups.length ? 'Open a project' : 'Your projects' }}
+                    </h2>
+                    <p class="mt-1 text-sm text-[var(--text-muted)]">
+                      {{ folderGroups.length ? folderGroups.length + ' tracked on this machine' : 'Nothing tracked on this machine yet' }}
+                    </p>
+                  </div>
+
+                  <div v-if="loading" class="flex min-h-44 items-center justify-center" role="status" aria-label="Loading projects">
+                    <span :class="spinnerClass" aria-hidden="true"></span>
+                  </div>
+
+                  <div v-else-if="homeProjectGroups.length" class="mt-7 border-t border-[var(--border)]">
+                    <button
+                      v-for="group in homeProjectGroups"
+                      :key="group.key"
+                      type="button"
+                      class="group flex w-full items-center gap-4 border-b border-[var(--border)] px-1 py-4 text-left transition-colors duration-150 hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--primary)]"
+                      @click="handleGroupClick(group)"
+                    >
+                      <span
+                        :class="[statusDot, groupReadyCount(group) ? statusDotLive : '']"
+                        :aria-label="groupReadyCount(group) ? groupReadyCount(group) + ' services live' : 'Idle'"
+                      ></span>
+                      <span class="min-w-0 flex-1">
+                        <span class="block truncate text-[15px] font-semibold text-[var(--text-strong)]">{{ group.name }}</span>
+                        <span class="mt-0.5 block truncate text-xs text-[var(--text-subtle)]">{{ group.path }}</span>
+                      </span>
+                      <span class="shrink-0 text-right text-xs text-[var(--text-muted)]">
+                        <span v-if="groupReadyCount(group)" class="block font-medium text-[var(--electric)]">
+                          {{ groupReadyCount(group) }} live
+                        </span>
+                        <span v-else class="block">{{ groupServiceCount(group) }} service{{ groupServiceCount(group) === 1 ? '' : 's' }}</span>
+                      </span>
+                      <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-[var(--text-subtle)] transition-transform duration-150 group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                        <path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div v-else-if="!recentImportable.length" class="flex flex-1 flex-col justify-center py-12">
+                    <p class="max-w-sm text-lg font-medium text-[var(--text-strong)]">Choose a parent folder to begin.</p>
+                    <p class="mt-2 max-w-sm text-sm leading-6 text-[var(--text-muted)]">
+                      Services stay grouped under the folder you select, so one project remains one project.
+                    </p>
+                  </div>
+
+                  <div v-if="recentImportable.length" class="mt-auto pt-10">
+                    <div class="flex items-center justify-between gap-4">
+                      <h2 class="text-sm font-semibold text-[var(--text-strong)]">
+                        {{ homeProjectGroups.length ? 'Not tracked yet' : 'Recently found' }}
+                      </h2>
+                      <span class="text-xs text-[var(--text-subtle)]">Add in one click</span>
+                    </div>
+                    <div class="mt-3 border-t border-[var(--border)]">
                       <button
                         v-for="project in recentImportable"
                         :key="project.path"
-                        class="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel-bg)] p-3 text-left transition-colors hover:bg-[var(--hover)]"
+                        type="button"
+                        class="flex w-full items-center gap-3 border-b border-[var(--border)] px-1 py-3 text-left transition-colors duration-150 hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--primary)] disabled:cursor-wait disabled:opacity-60"
                         :disabled="importLoading[project.path]"
                         @click="importRecentProject(project)"
                       >
-                        <div class="flex items-center justify-between gap-2">
-                          <span class="truncate text-sm font-medium text-[var(--text)]">{{ project.name }}</span>
-                          <span v-if="importLoading[project.path]" :class="spinnerClass" aria-hidden="true"></span>
-                          <span v-else class="text-lg leading-none text-[var(--text-subtle)]">+</span>
-                        </div>
-                        <p class="mt-1 truncate text-[10px] text-[var(--text-subtle)]">{{ project.path }}</p>
+                        <span class="min-w-0 flex-1">
+                          <span class="block truncate text-sm font-medium text-[var(--text-strong)]">{{ project.name }}</span>
+                          <span class="mt-0.5 block truncate text-[11px] text-[var(--text-subtle)]">{{ project.path }}</span>
+                        </span>
+                        <span v-if="importLoading[project.path]" :class="spinnerClass" aria-hidden="true"></span>
+                        <span v-else class="shrink-0 text-xs font-semibold text-[var(--text-muted)]">Add</span>
                       </button>
                     </div>
                   </div>
-                </div>
+
+                  <p v-if="error" class="mt-4 text-sm text-[var(--warning-text)]" role="alert">{{ error }}</p>
+                </section>
               </div>
             </div>
           </div>
@@ -2925,7 +3115,14 @@ watch(
                 <span :class="spinnerClass" aria-hidden="true"></span>
                 <span class="sr-only">Loading projects</span>
               </div>
-              <div v-if="error" class="text-sm text-[var(--text-muted)]">{{ error }}</div>
+              <div
+                v-if="error"
+                class="mb-3 flex items-start justify-between gap-3 rounded-xl bg-[var(--danger-bg)] px-3 py-2 text-sm text-[var(--danger-text)]"
+                role="alert"
+              >
+                <span class="min-w-0 break-words">{{ error }}</span>
+                <button class="shrink-0 rounded px-1 opacity-70 hover:opacity-100" aria-label="Dismiss error" @click="error = ''">×</button>
+              </div>
               <div v-if="!selectedGroup" class="flex h-full flex-col items-center justify-center text-center text-[var(--text-muted)]">
                 <p class="text-sm text-[var(--text-subtle)]">Choose a tracked project from the sidebar.</p>
                 <button class="mt-4" :class="btnPanelSecondary" @click="goHome">Go home</button>
@@ -3079,13 +3276,39 @@ watch(
                                 </div>
                               </div>
                               <div
-                                v-if="actionErrors[service.project.id]"
+                                v-if="startupConflictFor(service)"
+                                class="mt-2 rounded-lg border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning-text)]"
+                              >
+                                <p>
+                                  Another instance is already running at
+                                  <span class="font-mono">{{ startupConflictSummary(service) }}</span>.
+                                </p>
+                                <button
+                                  class="mt-2"
+                                  :class="btnPanelSecondary"
+                                  :disabled="isActionLoading('resolve-conflict', service.project.id, startupConflictFor(service)?.pid ?? 0)"
+                                  @click="resolveStartupConflict(service)"
+                                >
+                                  <span
+                                    v-if="isActionLoading('resolve-conflict', service.project.id, startupConflictFor(service)?.pid ?? 0)"
+                                    :class="spinnerClass"
+                                    aria-hidden="true"
+                                  ></span>
+                                  {{
+                                    isActionLoading('resolve-conflict', service.project.id, startupConflictFor(service)?.pid ?? 0)
+                                      ? 'Unplugging…'
+                                      : 'Unplug and retry'
+                                  }}
+                                </button>
+                              </div>
+                              <div
+                                v-if="actionErrors[service.project.id] && !startupConflictFor(service)"
                                 class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2 py-1 text-xs text-[var(--warning-text)]"
                               >
                                 {{ actionErrors[service.project.id] }}
                               </div>
                               <div
-                                v-if="service.status.error && !actionErrors[service.project.id]"
+                                v-if="service.status.error && !actionErrors[service.project.id] && !startupConflictFor(service)"
                                 class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2 py-1 text-xs text-[var(--warning-text)]"
                               >
                                 {{ service.status.error }}
@@ -3164,11 +3387,35 @@ watch(
                                   v-if="!service.status.running && externalInstancesFor(service).length"
                                   class="rounded-lg border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning-text)]"
                                 >
-                                  <p>
+                                  <p v-if="startupConflictFor(service)">
+                                    Another instance is already running at
+                                    <span class="font-mono">{{ startupConflictSummary(service) }}</span>.
+                                  </p>
+                                  <p v-else>
                                     External instance detected:
                                     <span class="font-mono">{{ externalInstanceSummary(service) }}</span>
                                   </p>
-                                  <div class="relative mt-2 flex justify-end">
+
+                                  <div v-if="startupConflictFor(service)" class="mt-2 flex justify-end">
+                                    <button
+                                      :class="btnPanelSecondary"
+                                      :disabled="isActionLoading('resolve-conflict', service.project.id, startupConflictFor(service)?.pid ?? 0)"
+                                      @click="resolveStartupConflict(service)"
+                                    >
+                                      <span
+                                        v-if="isActionLoading('resolve-conflict', service.project.id, startupConflictFor(service)?.pid ?? 0)"
+                                        :class="spinnerClass"
+                                        aria-hidden="true"
+                                      ></span>
+                                      {{
+                                        isActionLoading('resolve-conflict', service.project.id, startupConflictFor(service)?.pid ?? 0)
+                                          ? 'Unplugging…'
+                                          : 'Unplug and retry'
+                                      }}
+                                    </button>
+                                  </div>
+
+                                  <div v-else class="relative mt-2 flex justify-end">
                                     <button :class="btnPanelSecondary" @click.stop="toggleExternalMenu(service)">
                                       Resolve
                                     </button>
@@ -3227,13 +3474,13 @@ watch(
                                 </div>
                               </div>
                               <div
-                                v-if="actionErrors[service.project.id]"
+                                v-if="actionErrors[service.project.id] && !startupConflictFor(service)"
                                 class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2 py-1 text-xs text-[var(--warning-text)]"
                               >
                                 {{ actionErrors[service.project.id] }}
                               </div>
                               <div
-                                v-if="service.status.error && !actionErrors[service.project.id]"
+                                v-if="service.status.error && !actionErrors[service.project.id] && !startupConflictFor(service)"
                                 class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2 py-1 text-xs text-[var(--warning-text)]"
                               >
                                 {{ service.status.error }}
@@ -3398,14 +3645,14 @@ watch(
                             <div class="flex items-center rounded-lg bg-black/15 p-1" role="tablist" aria-label="Project output">
                             <button
                               class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
-                              :class="projectPanelMode === 'logs' ? 'bg-white/12 text-white' : 'text-white/55 hover:text-white'"
+                              :class="projectPanelMode === 'logs' ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white'"
                               @click="projectPanelMode = 'logs'"
                             >
                               Logs
                             </button>
                             <button
                               class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
-                              :class="projectPanelMode === 'browser' ? 'bg-white/12 text-white' : 'text-white/55 hover:text-white'"
+                              :class="projectPanelMode === 'browser' ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white'"
                               @click="projectPanelMode = 'browser'"
                             >
                               Browser
@@ -3492,12 +3739,15 @@ watch(
                               :key="tab.id"
                               class="group flex h-8 min-w-[130px] max-w-[190px] items-center gap-2 rounded-t-lg px-2.5 text-left text-[11px] transition-colors"
                               :class="tab.id === browserState.activeTabId ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5 hover:text-white/80'"
+                              :title="`${tab.title || tab.url || 'New tab'} — Delete or middle-click to close`"
                               @click="activateBrowserTab(tab.id)"
+                              @keydown.delete.prevent="closeBrowserTab(tab.id)"
+                              @auxclick.middle.prevent="closeBrowserTab(tab.id)"
                             >
                               <span v-if="tab.loading" :class="[spinnerClass, '!h-3 !w-3 !border']" aria-hidden="true"></span>
                               <span v-else class="h-1.5 w-1.5 shrink-0 rounded-full" :class="tab.error ? 'bg-[var(--log-error)]' : tab.detached ? 'bg-white/35' : 'bg-[var(--live)]'"></span>
                               <span class="min-w-0 flex-1 truncate">{{ tab.title || tab.url || 'New tab' }}</span>
-                              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100" title="Close tab" @click.stop="closeBrowserTab(tab.id)">×</span>
+                              <span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100 group-focus-visible:opacity-100" title="Close tab" aria-hidden="true" @click.stop="closeBrowserTab(tab.id)">×</span>
                             </button>
                             <button class="mb-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-lg text-white/50 hover:bg-white/10 hover:text-white" title="New tab" @click="browserAction('new')">+</button>
                           </div>
@@ -3803,7 +4053,7 @@ watch(
                   type="number"
                   min="1"
                   max="65535"
-                  :class="[inputBase, 'w-28 shrink-0 text-right font-mono text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none']"
+                  :class="[inputBase, '!w-28 shrink-0 text-right font-mono text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none']"
                   placeholder="Port"
                   @input="manualPortError = ''"
                 />

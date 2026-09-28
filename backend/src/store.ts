@@ -16,7 +16,7 @@ const defaultSettings: Settings = {
   startup_timeout_ms: 20000,
   scan_depth: 8,
   scan_ignore: [],
-  theme: 'dark'
+  theme: 'light'
 }
 
 async function ensureDataDir() {
@@ -24,17 +24,41 @@ async function ensureDataDir() {
 }
 
 async function readJson<T>(file: string): Promise<T | null> {
+  let raw: string
   try {
-    const raw = await fs.readFile(file, 'utf-8')
+    raw = await fs.readFile(file, 'utf-8')
+  } catch (err) {
+    return null
+  }
+  try {
     return JSON.parse(raw) as T
   } catch (err) {
+    // Keep the unreadable file so a later save cannot silently erase the user's data.
+    const backup = `${file}.corrupt-${Date.now()}`
+    await fs.rename(file, backup).catch(() => {})
+    console.error(`[multiprise] ${path.basename(file)} could not be parsed; moved it to ${backup}`)
     return null
   }
 }
 
-async function writeJson<T>(file: string, data: T) {
-  await ensureDataDir()
-  await fs.writeFile(file, JSON.stringify(data, null, 2))
+const writeQueues = new Map<string, Promise<void>>()
+
+// Writes to the same file are serialized and land atomically via rename, so
+// overlapping saves can never interleave into a truncated or mixed file.
+function writeJson<T>(file: string, data: T): Promise<void> {
+  const contents = JSON.stringify(data, null, 2)
+  const previous = writeQueues.get(file) ?? Promise.resolve()
+  const next = previous.catch(() => {}).then(async () => {
+    await ensureDataDir()
+    const temporary = `${file}.${process.pid}.tmp`
+    await fs.writeFile(temporary, contents)
+    await fs.rename(temporary, file)
+  })
+  writeQueues.set(file, next)
+  next.finally(() => {
+    if (writeQueues.get(file) === next) writeQueues.delete(file)
+  }).catch(() => {})
+  return next
 }
 
 export async function loadProjects(): Promise<Project[]> {
@@ -47,15 +71,30 @@ export async function saveProjects(projects: Project[]): Promise<void> {
   await writeJson(projectsFile, projects)
 }
 
+const clampInteger = (value: unknown, min: number, max: number, fallback: number) => {
+  const number = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.floor(number))) : fallback
+}
+
+// Only known keys with well-typed values ever reach the settings file.
+export function sanitizeSettings(input: unknown, base: Settings = defaultSettings): Settings {
+  const data = (input && typeof input === 'object' ? input : {}) as Partial<Record<keyof Settings, unknown>>
+  return {
+    auto_port: typeof data.auto_port === 'boolean' ? data.auto_port : base.auto_port,
+    auto_install: typeof data.auto_install === 'boolean' ? data.auto_install : base.auto_install,
+    port_base: clampInteger(data.port_base, 1024, 64535, base.port_base),
+    startup_timeout_ms: clampInteger(data.startup_timeout_ms, 10000, 30000, base.startup_timeout_ms),
+    scan_depth: clampInteger(data.scan_depth, 1, 64, base.scan_depth),
+    scan_ignore: Array.isArray(data.scan_ignore)
+      ? data.scan_ignore.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+      : base.scan_ignore,
+    theme: data.theme === 'light' || data.theme === 'dark' ? data.theme : base.theme
+  }
+}
+
 export async function loadSettings(): Promise<Settings> {
   const data = await readJson<Settings>(settingsFile)
-  if (!data) return { ...defaultSettings }
-  return {
-    ...defaultSettings,
-    ...data,
-    scan_ignore: Array.isArray(data.scan_ignore) ? data.scan_ignore : [],
-    startup_timeout_ms: Math.min(30000, Math.max(10000, Number(data.startup_timeout_ms) || defaultSettings.startup_timeout_ms))
-  }
+  return sanitizeSettings(data)
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

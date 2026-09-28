@@ -132,7 +132,8 @@ export async function normalizeProjects(state: AppState) {
       changed = true
     }
 
-    const inferredRole = inferRoleFromPath(project.path)
+    // Only folders inside the project count; parent directories say nothing about the service.
+    const inferredRole = inferRoleFromPath(path.relative(project.root_path ?? project.path, project.path))
     if (!project.role || (project.role === 'service' && inferredRole !== 'service')) {
       project.role = inferredRole
       changed = true

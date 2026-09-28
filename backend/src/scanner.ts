@@ -107,7 +107,15 @@ async function pickPackageManager(dir: string, rootBoundary: string): Promise<Pa
     if (files.includes('package-lock.json')) return { name: 'npm', root: current }
   }
 
-  return { name: 'npm', root: path.resolve(rootBoundary) }
+  // Without a lockfile, install where dependencies are declared: a workspace root
+  // that owns this package, otherwise the service folder itself.
+  for (const current of directories) {
+    const packageJson = await readJson<PackageJsonMetadata & { workspaces?: unknown }>(path.join(current, 'package.json'))
+    if (packageJson?.workspaces) return { name: 'npm', root: current }
+    if (await pathExists(path.join(current, 'pnpm-workspace.yaml'))) return { name: 'pnpm', root: current }
+  }
+
+  return { name: 'npm', root: path.resolve(dir) }
 }
 
 export function scoreScript(name: string, command: string) {
@@ -227,8 +235,9 @@ export async function scanProjects(roots: string[], settings: Settings): Promise
     visited.add(dir)
     if (depth > settings.scan_depth) return
 
+    // The folder the user picked is always scanned, even if it is named "build" or "dist".
     const baseName = path.basename(dir)
-    if (ignore.has(baseName)) return
+    if (depth > 0 && ignore.has(baseName)) return
 
     const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
     const entryNames = entries.map((entry) => entry.name)
@@ -261,14 +270,28 @@ export async function scanProjects(roots: string[], settings: Settings): Promise
   return results
 }
 
+const ORCHESTRATION_PATTERN = /\b(?:concurrently|npm-run-all|run-p|run-s|turbo|nx|lerna|foreman|overmind)\b|--(?:workspace|workspaces|prefix|filter|cwd)\b|(?:^|\s)-[wr](?:\s|$)|\b(?:yarn|pnpm)\s+workspaces?\b|\bcd\s+\S/
+
+// A root script that only launches the nested services would start them twice,
+// so it is skipped; a root that is an app in its own right stays a service.
+async function rootOrchestratesServices(root: ScanResult, nested: ScanResult[]) {
+  const packageJson = await readJson<PackageJsonMetadata & { workspaces?: unknown }>(path.join(root.path, 'package.json'))
+  if (packageJson?.workspaces || await pathExists(path.join(root.path, 'pnpm-workspace.yaml'))) return true
+  const body = root.suggested_script ? root.scripts[root.suggested_script] ?? '' : ''
+  if (ORCHESTRATION_PATTERN.test(body)) return true
+  return nested.some((service) => {
+    const relative = path.relative(root.path, service.path).split(path.sep)[0]
+    return !!relative && new RegExp(`(?:^|[\\s"'./])${relative.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:[\\s"'/]|$)`).test(body)
+  })
+}
+
 export async function discoverProjectServices(rootDir: string, settings: Settings): Promise<DiscoveredService[]> {
   const normalizedRoot = path.resolve(rootDir)
   const results = await scanProjects([normalizedRoot], settings)
-  const nestedRunnable = results.some((result) =>
-    path.resolve(result.path) !== normalizedRoot &&
-    !!result.suggested_command &&
-    !/^docker(?:-|\s)/.test(result.suggested_command)
-  )
+  const isRunnable = (result: ScanResult) => !!result.suggested_command && !/^docker(?:-|\s)/.test(result.suggested_command)
+  const nested = results.filter((result) => path.resolve(result.path) !== normalizedRoot && isRunnable(result))
+  const rootResult = results.find((result) => path.resolve(result.path) === normalizedRoot)
+  const nestedRunnable = nested.length > 0 && !!rootResult && await rootOrchestratesServices(rootResult, nested)
   const services: DiscoveredService[] = []
 
   for (const result of results) {

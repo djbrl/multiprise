@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, clipboard, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, session, shell } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -23,6 +23,25 @@ let browserTabSequence = 0;
 
 const defaultDevUrl = 'http://127.0.0.1:5173';
 const rendererDistPath = path.join(__dirname, 'renderer', 'dist', 'index.html');
+// Read before the dev-only variables below are scrubbed from the environment.
+const explicitDevUrl = app.isPackaged ? null : process.env.VITE_DEV_SERVER_URL || null;
+const BROWSER_PARTITION = 'persist:multiprise-browser';
+// Harmless capabilities pages in the in-app browser may use; everything else is denied.
+const ALLOWED_BROWSER_PERMISSIONS = new Set(['clipboard-sanitized-write', 'fullscreen', 'pointerLock']);
+// The dev launcher sets these for Multiprise itself; managed services must not inherit them.
+const DEV_LAUNCHER_ENV = ['PORT', 'BACKEND_PORT', 'FRONTEND_PORT', 'API_PORT', 'VITE_API_PORT', 'VITE_API_URL', 'VITE_DEV_SERVER_URL'];
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
 
 const checkDevServer = (url) =>
   new Promise((resolve) => {
@@ -149,29 +168,24 @@ const loadDevServer = async (window, url, options = {}) => {
 };
 
 const loadRenderer = async (window) => {
-  const explicitDevUrl = process.env.VITE_DEV_SERVER_URL;
   const hasDist = fs.existsSync(rendererDistPath);
+
+  if (app.isPackaged) {
+    if (hasDist) {
+      await safeLoadFile(window, rendererDistPath);
+      return;
+    }
+    renderLoadingPage(window, 'The bundled renderer is missing.');
+    return;
+  }
 
   if (explicitDevUrl) {
     if (await checkDevServer(explicitDevUrl)) {
       const loaded = await safeLoadUrl(window, explicitDevUrl);
       if (loaded) return;
     }
-    if (explicitDevUrl !== defaultDevUrl && (await checkDevServer(defaultDevUrl))) {
-      const loaded = await safeLoadUrl(window, defaultDevUrl);
-      if (loaded) return;
-    }
-    if (hasDist) {
-      await safeLoadFile(window, rendererDistPath);
-      return;
-    }
     await loadDevServer(window, explicitDevUrl, { attempts: 25, keepTrying: true });
     return;
-  }
-
-  if (await checkDevServer(defaultDevUrl)) {
-    const loaded = await safeLoadUrl(window, defaultDevUrl);
-    if (loaded) return;
   }
 
   if (hasDist) {
@@ -426,6 +440,7 @@ async function openBrowserTab(value, options = {}) {
 
   const view = new WebContentsView({
     webPreferences: {
+      partition: BROWSER_PARTITION,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
@@ -526,7 +541,7 @@ const handleBrowserAction = async (_event, action, payload = {}) => {
       tab.error = err instanceof Error ? err.message : String(err);
     });
   }
-  if (action === 'external' && tab.url && tab.url !== 'about:blank') await shell.openExternal(tab.url);
+  if (action === 'external' && tab.url && tab.url !== 'about:blank') await shell.openExternal(normalizeBrowserUrl(tab.url));
   if (action === 'devtools') contents.isDevToolsOpened() ? contents.closeDevTools() : contents.openDevTools({ mode: 'bottom', activate: true });
   updateBrowserTab(tab);
   return browserState();
@@ -553,6 +568,9 @@ const createWindow = () => {
     icon: path.join(__dirname, 'build', 'icon.png'),
     width: 1280,
     height: 820,
+    // Below this the header, service cards and logs start to overlap.
+    minWidth: 960,
+    minHeight: 600,
     backgroundColor: '#f3f4f6',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 14 },
@@ -563,6 +581,28 @@ const createWindow = () => {
       nodeIntegration: false,
       sandbox: true
     }
+  });
+
+  // The privileged renderer must never navigate away from the app or spawn windows.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const current = mainWindow.webContents.getURL();
+    let sameOrigin = false;
+    try {
+      const next = new URL(url);
+      const here = new URL(current);
+      sameOrigin = next.protocol === here.protocol && next.host === here.host && next.protocol !== 'data:';
+    } catch (err) {
+      sameOrigin = false;
+    }
+    if (!sameOrigin) event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      openBrowserTab(url).catch(() => {});
+    } catch (err) {
+      // Non-HTTP URLs are ignored.
+    }
+    return { action: 'deny' };
   });
 
   mainWindow.once('ready-to-show', () => {
@@ -578,29 +618,84 @@ const createWindow = () => {
   });
 };
 
+const rendererOrigins = () => {
+  if (app.isPackaged) return ['null'];
+  const origins = new Set(['null']);
+  for (const url of [explicitDevUrl, defaultDevUrl]) {
+    if (!url) continue;
+    try {
+      const parsed = new URL(url);
+      origins.add(parsed.origin);
+      if (parsed.hostname === '127.0.0.1') origins.add(`${parsed.protocol}//localhost:${parsed.port}`);
+      if (parsed.hostname === 'localhost') origins.add(`${parsed.protocol}//127.0.0.1:${parsed.port}`);
+    } catch (err) {
+      // Ignore malformed dev URLs.
+    }
+  }
+  return [...origins];
+};
+
+const restrictBrowserPermissions = (target) => {
+  target.setPermissionRequestHandler((_contents, permission, callback) => {
+    callback(ALLOWED_BROWSER_PERMISSIONS.has(permission));
+  });
+  target.setPermissionCheckHandler((_contents, permission) => ALLOWED_BROWSER_PERMISSIONS.has(permission));
+};
+
+const isMainWindowSender = (event) =>
+  Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents);
+
+const closeSplashWindow = () => {
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+  splashWindow = null;
+};
+
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
   const iconPath = path.join(__dirname, 'build', 'icon.png');
   if (process.platform === 'darwin' && app.dock && fs.existsSync(iconPath)) {
     app.dock.setIcon(iconPath);
   }
-  await hydrateShellPath();
-  if (app.isPackaged) {
-    process.env.MULTIPRISE_DATA_DIR = path.join(app.getPath('userData'), 'data');
+  restrictBrowserPermissions(session.defaultSession);
+  restrictBrowserPermissions(session.fromPartition(BROWSER_PARTITION));
+  createSplashWindow();
+
+  try {
+    await hydrateShellPath();
+    if (app.isPackaged) {
+      process.env.MULTIPRISE_DATA_DIR = path.join(app.getPath('userData'), 'data');
+    }
+    const backendPort = app.isPackaged ? 0 : undefined;
+    ({ startServer, stopServer } = loadBackendModule());
+    backend = await startServer({ port: backendPort, allowedOrigins: rendererOrigins() });
+  } catch (err) {
+    closeSplashWindow();
+    dialog.showErrorBox(
+      'Multiprise could not start',
+      `The local service manager failed to start.\n\n${err instanceof Error ? err.message : String(err)}`
+    );
+    app.exit(1);
+    return;
   }
-  ({ startServer, stopServer } = loadBackendModule());
-  backend = await startServer();
+  if (!app.isPackaged) {
+    DEV_LAUNCHER_ENV.forEach((name) => delete process.env[name]);
+  }
 
   ipcMain.handle('ping', () => ({
     ok: true,
     time: new Date().toISOString()
   }));
 
-  ipcMain.handle('backend:health', () => ({
-    ok: true,
-    url: backend?.url || null,
-    port: backend?.port || null,
-    time: new Date().toISOString()
-  }));
+  ipcMain.handle('backend:health', (event) => {
+    if (!isMainWindowSender(event)) throw new Error('Not allowed');
+    return {
+      ok: true,
+      url: backend?.url || null,
+      port: backend?.port || null,
+      token: backend?.token || null,
+      time: new Date().toISOString()
+    };
+  });
 
   ipcMain.handle('clipboard:write', (_event, value) => {
     clipboard.writeText(String(value ?? ''));
@@ -617,24 +712,38 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:state', () => browserState());
   ipcMain.handle('browser:action', handleBrowserAction);
 
-  createSplashWindow();
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   });
 });
+
+let shutdownState = 'idle';
 
 const shutdown = async () => {
   destroyBrowserTabs();
   if (stopServer) await stopServer(backend);
 };
 
-app.on('before-quit', shutdown);
+// Stopping services is asynchronous, so the first quit is deferred until they are gone.
+app.on('before-quit', (event) => {
+  if (shutdownState === 'done') return;
+  event.preventDefault();
+  if (shutdownState === 'running') return;
+  shutdownState = 'running';
+  shutdown()
+    .catch((err) => console.error('[multiprise] shutdown failed:', err))
+    .finally(() => {
+      shutdownState = 'done';
+      app.quit();
+    });
+});
 
-app.on('window-all-closed', async () => {
-  if (process.platform !== 'darwin') {
-    await shutdown();
-    app.quit();
-  }
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => app.quit());
+}
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
 });

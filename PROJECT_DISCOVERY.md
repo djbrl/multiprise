@@ -40,7 +40,7 @@ Multiprise recognizes `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`
 
 ## Parent Projects
 
-The folder selected in the picker is always the tracked project root. Services discovered below it remain grouped under that parent. If runnable child services exist, a runnable root `package.json` is treated as an orchestration wrapper and is not added again.
+The folder selected in the picker is always the tracked project root. Services discovered below it remain grouped under that parent. If runnable child services exist, a root `package.json` is skipped only when it orchestrates them — it declares `workspaces` (or has `pnpm-workspace.yaml`), its script uses a runner such as `concurrently`, `turbo`, `nx`, `npm-run-all`, `--prefix`, or `--workspace`, or it `cd`s into / names a child service folder. A root that is an app in its own right (for example `vite` at the root with a `docs/` site, or an Express server with a `client/` folder) stays a service. The selected folder itself is always scanned, even when it is named `build` or `dist`.
 
 ## Service Roles
 
@@ -56,7 +56,7 @@ Project Launch starts support services first, waits for backends to become ready
 
 When enabled in Settings, Multiprise:
 
-1. checks for dependencies at the detected workspace install root;
+1. checks for dependencies at the detected install root: the folder holding the lockfile or `packageManager` declaration, else a workspace root that declares `workspaces`, else the service folder itself;
 2. installs them once when `node_modules` is missing;
 3. detects missing compiled targets referenced by the selected command;
 4. runs the existing build script when available;

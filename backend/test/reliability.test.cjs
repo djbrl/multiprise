@@ -5,10 +5,14 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
+// Never let tests touch the developer's real backend/data directory.
+process.env.MULTIPRISE_DATA_DIR = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'multiprise-test-data-'))
+
 const scanner = require('../dist/scanner.js')
 const processes = require('../dist/processes.js')
+const runtime = require('../dist/runtime.js')
 const { prepareService } = require('../dist/preparation.js')
-const { classifyStartupFailure } = require('../dist/failures.js')
+const { classifyStartupFailure, detectStartupConflict } = require('../dist/failures.js')
 
 async function temporaryDirectory(prefix) {
   return fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-`))
@@ -62,6 +66,32 @@ test('Nuxt receives a strict selected port through CLI arguments', () => {
     scanner.adaptCommandForFramework({ command: 'npm run dev', framework: 'nuxt', packageManager: 'npm', port: 4836 }),
     'npm run dev -- --port 4836 --host 127.0.0.1'
   )
+})
+
+
+test('Node runtime declarations are inherited from the selected project root', async () => {
+  const root = await temporaryDirectory('multiprise-runtime')
+  const service = path.join(root, 'apps', 'web')
+  await fs.mkdir(service, { recursive: true })
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+    engines: { node: '>=22.13.0 <23' }
+  }))
+
+  const engineDeclaration = await runtime.findNodeRuntimeDeclaration(service, root)
+  assert.deepEqual(engineDeclaration, {
+    spec: '22',
+    source: 'package.json#engines.node',
+    directory: root,
+    range: '>=22.13.0 <23'
+  })
+
+  await fs.writeFile(path.join(root, '.node-version'), '22.14.0\n')
+  const pinnedDeclaration = await runtime.findNodeRuntimeDeclaration(service, root)
+  assert.deepEqual(pinnedDeclaration, {
+    spec: '22.14.0',
+    source: '.node-version',
+    directory: root
+  })
 })
 
 test('automatic preparation builds a missing compiled startup target once', async () => {
@@ -119,6 +149,52 @@ test('an IPv6-loopback-only service is accepted as ready', async (context) => {
   assert.equal(processes.getProcessStatus(id).phase, 'stopped')
 })
 
+
+test('HTTP readiness waits through a temporary 503 startup response', async () => {
+  const root = await temporaryDirectory('multiprise-http-ready')
+  const port = await freePort()
+  await fs.writeFile(
+    path.join(root, 'server.cjs'),
+    "const http=require('http');const started=Date.now();http.createServer((_,res)=>{res.statusCode=Date.now()-started<350?503:200;res.end()}).listen(Number(process.argv[2]),'127.0.0.1')"
+  )
+  const id = 'fixture-http-ready'
+
+  await processes.startProcess({
+    id,
+    command: `node server.cjs ${port}`,
+    cwd: root,
+    port,
+    readiness: 'http',
+    timeoutMs: 3000
+  })
+  assert.equal(processes.getProcessStatus(id).phase, 'ready')
+  await processes.stopProcess(id)
+})
+
+test('HTTP readiness rejects a service that remains on a 503 startup page', async () => {
+  const root = await temporaryDirectory('multiprise-http-unhealthy')
+  const port = await freePort()
+  await fs.writeFile(
+    path.join(root, 'server.cjs'),
+    "require('http').createServer((_,res)=>{res.statusCode=503;res.end('Starting Nuxt')}).listen(Number(process.argv[2]),'127.0.0.1')"
+  )
+  const id = 'fixture-http-unhealthy'
+
+  await assert.rejects(
+    processes.startProcess({
+      id,
+      command: `node server.cjs ${port}`,
+      cwd: root,
+      port,
+      readiness: 'http',
+      timeoutMs: 900
+    }),
+    /HTTP 503/i
+  )
+  assert.equal(processes.getProcessStatus(id).phase, 'failed')
+  assert.match(processes.getProcessStatus(id).error, /HTTP 503/i)
+})
+
 test('an early process exit is retained as a failed state with final logs', async () => {
   const root = await temporaryDirectory('multiprise-failure')
   await fs.writeFile(path.join(root, 'fail.cjs'), "console.error('missing environment variable API_KEY');process.exit(1)")
@@ -149,6 +225,30 @@ test('common startup errors are classified into actionable categories', () => {
   assert.equal(classifyStartupFailure('Error: listen EADDRINUSE', 'failed', 4000).code, 'port-in-use')
   assert.equal(classifyStartupFailure("Cannot find module '/app/dist/main.js'", 'failed').code, 'missing-build')
   assert.equal(classifyStartupFailure('/bin/sh: pnpm: command not found', 'failed').code, 'runtime-missing')
+  assert.equal(classifyStartupFailure('HTTP readiness failed: service kept returning HTTP 503 on port 4000', 'failed', 4000).code, 'unhealthy-response')
+})
+
+test('an already-running dev server exposes a recoverable process conflict', () => {
+  const output = [
+    'Another vinext dev server is already running.',
+    '- Local: http://127.0.0.1:5808.',
+    '- PID: 3102',
+    '- Dir: /Users/dev/DakarDemDikk',
+    "or run 'kill 3102' to stop it and start a new one."
+  ].join('\n')
+
+  assert.deepEqual(detectStartupConflict(output), {
+    pid: 3102,
+    port: 5808,
+    url: 'http://127.0.0.1:5808',
+    cwd: '/Users/dev/DakarDemDikk'
+  })
+  assert.equal(classifyStartupFailure(output, 'failed', 5295).code, 'existing-instance')
+  assert.match(classifyStartupFailure(output, 'failed', 5295).message, /5808.*3102/)
+})
+
+test('unrelated PID output is not treated as a process conflict', () => {
+  assert.equal(detectStartupConflict('Server failed. PID: 3102'), null)
 })
 
 test('current compatibility fixtures discover the intended development command', async () => {
@@ -236,4 +336,309 @@ test('generated deployment output is never discovered as another service', async
     scan_depth: 8, scan_ignore: [], theme: 'dark'
   })
   assert.deepEqual(services.filter((service) => service.kind === 'command').map((service) => service.path), [backend])
+})
+
+async function startTestApi(options = {}) {
+  const http = require('node:http')
+  const { createApp } = require('../dist/server.js')
+  const { sanitizeSettings } = require('../dist/store.js')
+  const state = { projects: [], settings: sanitizeSettings({}), scans: new Map() }
+  const app = await createApp(state, { token: 'test-token', allowedOrigins: ['null'], ...options })
+  const server = http.createServer(app)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  const call = (route, init = {}) => {
+    const headers = { 'x-multiprise-token': 'test-token', ...(init.headers ?? {}) }
+    for (const [key, value] of Object.entries(headers)) if (value === null) delete headers[key]
+    return new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: route, method: init.method ?? 'GET', headers }, (res) => {
+        let body = ''
+        res.on('data', (chunk) => { body += chunk })
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }))
+      })
+      req.on('error', reject)
+      if (init.body !== undefined) req.write(init.body)
+      req.end()
+    })
+  }
+  const json = (method, route, value, headers = {}) =>
+    call(route, { method, body: typeof value === 'string' ? value : JSON.stringify(value), headers: { 'content-type': 'application/json', ...headers } })
+  return { state, call, json, close: () => new Promise((resolve) => server.close(resolve)) }
+}
+
+test('the API rejects requests without the launch token, from foreign origins, or via foreign hosts', async (context) => {
+  const api = await startTestApi()
+  context.after(api.close)
+
+  assert.equal((await api.call('/api/projects')).status, 200)
+  assert.equal((await api.call('/api/projects', { headers: { 'x-multiprise-token': null } })).status, 401)
+  assert.equal((await api.call('/api/projects', { headers: { 'x-multiprise-token': 'wrong-token' } })).status, 401)
+  assert.equal((await api.call('/api/projects?token=test-token', { headers: { 'x-multiprise-token': null } })).status, 200)
+  assert.equal((await api.call('/api/settings?token=test-token', { method: 'PATCH', headers: { 'x-multiprise-token': null } })).status, 401)
+  assert.equal((await api.call('/api/projects', { headers: { origin: 'https://evil.example' } })).status, 403)
+  assert.equal((await api.call('/api/projects', { method: 'OPTIONS', headers: { origin: 'https://evil.example' } })).status, 403)
+  assert.equal((await api.call('/api/projects', { headers: { host: 'attacker.example' } })).status, 403)
+
+  const preflight = await api.call('/api/projects', { method: 'OPTIONS', headers: { origin: 'null', 'x-multiprise-token': null } })
+  assert.equal(preflight.status, 204)
+  assert.equal(preflight.headers['access-control-allow-origin'], 'null')
+  assert.match(preflight.headers['access-control-allow-headers'], /x-multiprise-token/)
+
+  const formPost = await api.call('/api/projects/any/start', {
+    method: 'POST',
+    body: 'x',
+    headers: { origin: 'https://evil.example', 'content-type': 'text/plain', 'x-multiprise-token': null }
+  })
+  assert.equal(formPost.status, 403)
+})
+
+test('malformed request bodies are rejected without crashing the API', async (context) => {
+  const api = await startTestApi()
+  context.after(api.close)
+
+  assert.equal((await api.json('POST', '/api/projects/inspect', { roots: [123, null, { a: 1 }] })).status, 200)
+  assert.equal((await api.json('POST', '/api/projects', { path: { a: 1 } })).status, 400)
+  assert.equal((await api.json('POST', '/api/projects/scan', { roots: [null] })).status, 400)
+  assert.equal((await api.json('POST', '/api/projects', '{bad')).status, 400)
+  assert.equal((await api.call('/api/health')).status, 200)
+})
+
+test('settings updates only persist known keys with valid values', async (context) => {
+  const api = await startTestApi()
+  context.after(api.close)
+
+  const response = await api.json('PATCH', '/api/settings', { port_base: 'abc', scan_depth: -1, auto_port: 'no', theme: 'light', extra: 1 })
+  const settings = JSON.parse(response.body)
+  assert.equal(settings.port_base, 3000)
+  assert.equal(settings.scan_depth, 1)
+  assert.equal(settings.auto_port, true)
+  assert.equal(settings.theme, 'light')
+  assert.equal('extra' in settings, false)
+})
+
+test('project updates reject invalid ports and names', async (context) => {
+  const api = await startTestApi()
+  context.after(api.close)
+  api.state.projects.push({ id: 'p1', name: 'web', path: os.tmpdir(), root_path: os.tmpdir(), tags: [], kind: 'command', role: 'frontend', created_at: new Date().toISOString() })
+
+  assert.equal((await api.json('PATCH', '/api/projects/p1', { port: 'abc' })).status, 400)
+  assert.equal((await api.json('PATCH', '/api/projects/p1', { port: 99999999 })).status, 400)
+  assert.equal((await api.json('PATCH', '/api/projects/p1', { name: { x: 1 } })).status, 400)
+  assert.equal((await api.json('PATCH', '/api/projects/p1', { command_source: 'bogus' })).status, 400)
+  assert.equal((await api.json('PATCH', '/api/projects/p1', { port: 5173 })).status, 200)
+})
+
+test('concurrent project saves always leave a valid file and corrupt files are preserved', async () => {
+  const store = require('../dist/store.js')
+  const file = path.join(process.env.MULTIPRISE_DATA_DIR, 'projects.json')
+  const saves = Array.from({ length: 40 }, (_, index) =>
+    store.saveProjects(Array.from({ length: 40 - index }, (__, item) => ({ id: `p${item}`, name: 'x'.repeat(200) })))
+  )
+  await Promise.all(saves)
+  const saved = JSON.parse(await fs.readFile(file, 'utf8'))
+  assert.equal(saved.length, 1)
+
+  await fs.writeFile(file, '[{"id":"keep-me"}\n]garbage')
+  assert.deepEqual(await store.loadProjects(), [])
+  const backups = (await fs.readdir(process.env.MULTIPRISE_DATA_DIR)).filter((name) => name.startsWith('projects.json.corrupt-'))
+  assert.equal(backups.length, 1)
+  assert.match(await fs.readFile(path.join(process.env.MULTIPRISE_DATA_DIR, backups[0]), 'utf8'), /keep-me/)
+})
+
+test('stopping the server stops every managed service and its child processes', async () => {
+  const root = await temporaryDirectory('multiprise-stop-all')
+  const pidFile = path.join(root, 'grandchild.pid')
+  await fs.writeFile(path.join(root, 'server.cjs'), `
+    const { spawn } = require('child_process')
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+    require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(child.pid))
+    require('net').createServer(() => {}).listen(Number(process.argv[2]), '127.0.0.1')
+  `)
+  const alive = (pid) => { try { process.kill(pid, 0); return true } catch { return false } }
+  const ids = ['stop-all-a', 'stop-all-b']
+  const pids = []
+  for (const id of ids) {
+    const port = await freePort()
+    await processes.startProcess({ id, command: `node server.cjs ${port}`, cwd: root, port, timeoutMs: 5000 })
+    pids.push(processes.getProcessPid(id))
+  }
+  const grandchild = Number(await fs.readFile(pidFile, 'utf8'))
+  assert.ok(pids.every(alive) && alive(grandchild))
+
+  const { stopServer } = require('../dist/index.js')
+  await stopServer(null)
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.ok(pids.every((pid) => !alive(pid)))
+  assert.equal(alive(grandchild), false)
+  assert.ok(ids.every((id) => processes.getProcessPid(id) === null))
+})
+
+test('HTTP readiness accepts a dev server that answers 404 at the root path', async () => {
+  const root = await temporaryDirectory('multiprise-http-404')
+  const port = await freePort()
+  await fs.writeFile(
+    path.join(root, 'server.cjs'),
+    "require('http').createServer((req,res)=>{res.statusCode=req.url.startsWith('/app/')?200:404;res.end()}).listen(Number(process.argv[2]),'127.0.0.1')"
+  )
+  await processes.startProcess({ id: 'http-404', command: `node server.cjs ${port}`, cwd: root, port, readiness: 'http', timeoutMs: 5000 })
+  try {
+    assert.equal(processes.getProcessStatus('http-404').phase, 'ready')
+  } finally {
+    await processes.stopProcess('http-404')
+  }
+})
+
+test('an engines range satisfied by the active Node keeps the active runtime', async () => {
+  assert.equal(runtime.versionSatisfies('v24.13.1', '>=18'), true)
+  assert.equal(runtime.versionSatisfies('16.20.0', '>=18'), false)
+  assert.equal(runtime.versionSatisfies('20.19.0', '^20.19 || >=22.12'), true)
+  assert.equal(runtime.versionSatisfies('22.11.0', '^20.19 || >=22.12'), false)
+  assert.equal(runtime.versionSatisfies('20.1.0', '>=16 <21'), true)
+  assert.equal(runtime.versionSatisfies('18.18.0', '~18.17'), false)
+
+  const root = await temporaryDirectory('multiprise-engines')
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ engines: { node: `>=${process.versions.node.split('.')[0] - 4}` } }))
+  const resolved = await runtime.resolveProjectNodeRuntime({
+    command: 'npm run dev',
+    cwd: root,
+    env: { PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}` }
+  })
+  assert.equal(resolved.version, process.version)
+})
+
+test('dependencies install in the service folder when no lockfile or workspace exists', async () => {
+  const root = await temporaryDirectory('multiprise-install-root')
+  const web = path.join(root, 'web')
+  await fs.mkdir(web)
+  await fs.writeFile(path.join(web, 'package.json'), JSON.stringify({ scripts: { dev: 'vite' }, devDependencies: { vite: '^7.0.0' } }))
+  assert.equal((await scanner.detectProject(web, root)).package_root, web)
+
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ private: true, workspaces: ['web'] }))
+  assert.equal((await scanner.detectProject(web, root)).package_root, root)
+})
+
+test('a parent folder name never changes a discovered service role', async () => {
+  const parent = await temporaryDirectory('multiprise-role')
+  const root = path.join(parent, 'api', 'tool')
+  await fs.mkdir(root, { recursive: true })
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { dev: 'node index.js' } }))
+  const { normalizeProjects } = require('../dist/state.js')
+  const state = {
+    settings: { auto_port: true, auto_install: true, port_base: 3000, startup_timeout_ms: 20000, scan_depth: 8, scan_ignore: [], theme: 'dark' },
+    scans: new Map(),
+    projects: [{ id: 'tool', name: 'tool', path: root, root_path: root, tags: [], command: 'npm run dev', command_source: 'auto', kind: 'command', role: 'service', created_at: new Date().toISOString() }]
+  }
+  await normalizeProjects(state)
+  assert.equal(state.projects[0].role, 'service')
+})
+
+async function httpServiceFixture(prefix, packageJson = {}) {
+  const root = await temporaryDirectory(prefix)
+  await fs.writeFile(path.join(root, 'server.js'), "require('http').createServer((q,r)=>r.end('ok')).listen(Number(process.env.PORT),'127.0.0.1')")
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'svc', scripts: { dev: 'node server.js' }, ...packageJson }))
+  return root
+}
+
+test('simultaneous starts launch the service once and keep its port consistent', async (context) => {
+  const api = await startTestApi()
+  const root = await httpServiceFixture('multiprise-concurrent')
+  const [created] = JSON.parse((await api.json('POST', '/api/projects', { path: root })).body).projects
+  const id = created.project.id
+  context.after(async () => { await processes.stopProcess(id); await api.close() })
+
+  const responses = await Promise.all([1, 2, 3].map(() => api.json('POST', `/api/projects/${id}/start`, { role: 'backend' })))
+  const statuses = responses.map((response) => response.status).sort()
+  assert.deepEqual(statuses, [200, 409, 409])
+
+  const view = JSON.parse((await api.call('/api/projects')).body).projects[0]
+  assert.equal(view.status.phase, 'ready')
+  assert.equal(view.project.last_error, null)
+  const { listListeningPorts } = require('../dist/ports.js')
+  const listeners = (await listListeningPorts()).filter((entry) => entry.port === view.project.port)
+  assert.equal(listeners.length > 0, true)
+
+  // The node server is a child of npm, but it belongs to this service rather than being "external".
+  const instances = JSON.parse((await api.call(`/api/projects/${id}/process/instances`)).body).instances
+  assert.deepEqual(instances.map((instance) => instance.source), ['managed'])
+  const kill = await api.json('POST', `/api/projects/${id}/process/kill`, { pid: listeners[0].pid })
+  assert.equal(kill.status, 400)
+})
+
+test('stopping during the build phase cancels the launch', async (context) => {
+  const api = await startTestApi()
+  const root = await temporaryDirectory('multiprise-cancel-build')
+  await fs.writeFile(path.join(root, 'build.js'), "setTimeout(()=>{require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/main.js',\"require('http').createServer((q,r)=>r.end()).listen(Number(process.env.PORT),'127.0.0.1')\")},1500)")
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'slow', scripts: { start: 'node dist/main.js', build: 'node build.js' } }))
+  const [created] = JSON.parse((await api.json('POST', '/api/projects', { path: root })).body).projects
+  const id = created.project.id
+  context.after(async () => { await processes.stopProcess(id); await api.close() })
+
+  const starting = api.json('POST', `/api/projects/${id}/start`, { role: 'backend' })
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  assert.equal(JSON.parse((await api.call('/api/projects')).body).projects[0].status.phase, 'starting')
+  assert.equal((await api.json('POST', `/api/projects/${id}/stop`, {})).status, 200)
+
+  assert.equal((await starting).status, 409)
+  await new Promise((resolve) => setTimeout(resolve, 1800))
+  assert.equal(processes.getProcessPid(id), null)
+  assert.equal(JSON.parse((await api.call('/api/projects')).body).projects[0].status.phase, 'stopped')
+  // The interrupted build never produced its output.
+  assert.equal(await fs.stat(path.join(root, 'dist')).then(() => true, () => false), false)
+})
+
+test('a root app stays a service unless its script only orchestrates the nested services', async () => {
+  const settings = { scan_depth: 8, scan_ignore: [] }
+  const layout = async (files) => {
+    const root = await temporaryDirectory('multiprise-orchestration')
+    for (const [file, contents] of Object.entries(files)) {
+      await fs.mkdir(path.dirname(path.join(root, file)), { recursive: true })
+      await fs.writeFile(path.join(root, file), JSON.stringify(contents))
+    }
+    const services = await scanner.discoverProjectServices(root, settings)
+    return services.map((service) => service.path === root ? '.' : path.relative(root, service.path)).sort()
+  }
+
+  assert.deepEqual(await layout({
+    'package.json': { scripts: { dev: 'vite' }, devDependencies: { vite: '^7' } },
+    'docs/package.json': { scripts: { dev: 'vitepress dev' } }
+  }), ['.', 'docs'])
+  assert.deepEqual(await layout({
+    'package.json': { scripts: { dev: 'concurrently "npm:dev:*"' } },
+    'backend/package.json': { scripts: { dev: 'nodemon index.js' } },
+    'frontend/package.json': { scripts: { dev: 'vite' } }
+  }), ['backend', 'frontend'])
+  assert.deepEqual(await layout({
+    'package.json': { scripts: { dev: 'nodemon server.js' } },
+    'client/package.json': { scripts: { dev: 'vite' } }
+  }), ['.', 'client'])
+})
+
+test('a project folder named like a build directory is still discovered', async () => {
+  const parent = await temporaryDirectory('multiprise-build-root')
+  const root = path.join(parent, 'build')
+  await fs.mkdir(root)
+  await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { dev: 'node index.js' } }))
+  const services = await scanner.discoverProjectServices(root, { scan_depth: 8, scan_ignore: [] })
+  assert.equal(services.length, 1)
+})
+
+test('overlapping folders and broken manifests are rejected with a clear reason', async (context) => {
+  const api = await startTestApi()
+  context.after(api.close)
+  const root = await httpServiceFixture('multiprise-overlap')
+  await fs.mkdir(path.join(root, 'nested'))
+  await fs.writeFile(path.join(root, 'nested', 'package.json'), JSON.stringify({ scripts: { dev: 'node x.js' } }))
+
+  assert.equal((await api.json('POST', '/api/projects', { path: root })).status, 200)
+  const nested = await api.json('POST', '/api/projects', { path: path.join(root, 'nested') })
+  assert.equal(nested.status, 400)
+  assert.match(nested.body, /overlaps the tracked project/)
+
+  const broken = await temporaryDirectory('multiprise-broken-manifest')
+  await fs.writeFile(path.join(broken, 'package.json'), '{ "scripts": { "dev": ')
+  const response = await api.json('POST', '/api/projects', { path: broken })
+  assert.equal(response.status, 400)
+  assert.match(response.body, /package\.json is not valid JSON/)
+
+  assert.equal((await api.json('POST', `/api/projects/${api.state.projects[0].id}/open`, { target: 'bogus' })).status, 400)
 })

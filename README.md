@@ -7,7 +7,23 @@ Multiprise is a macOS desktop control center for developers who run several loca
 
 The name comes from the French word for a power strip: one place where many projects can be plugged in, observed, and unplugged.
 
-> Current release: `v0.1.0` for Apple Silicon macOS. The build is not yet signed or notarized for public distribution.
+> Current release: `v0.1.0` for Apple Silicon macOS. The build is not yet signed or notarized, so the first launch needs one extra approval step (see below).
+
+## Install
+
+**Requirements:** a Mac with Apple Silicon (M1 or newer) running macOS 12 Monterey or later, plus the runtimes your own projects need (Node.js, Cargo, Docker, …).
+
+1. Download `Multiprise-<version>-arm64.dmg` from the [Releases](https://github.com/Djbrl/multiprise/releases) page.
+2. Open the DMG and drag **Multiprise** into **Applications**.
+3. Open Multiprise from Applications. Because the app is not notarized yet, macOS blocks the first launch:
+   - open **System Settings → Privacy & Security**, scroll to the message about Multiprise, and click **Open Anyway**; then confirm with your password or Touch ID. (Since macOS 15, right-click → Open no longer bypasses this.)
+   - or, from Terminal, remove the download quarantine flag:
+
+     ```bash
+     xattr -dr com.apple.quarantine /Applications/Multiprise.app
+     ```
+
+After that first approval, Multiprise opens normally. Your tracked projects and settings live in `~/Library/Application Support/Multiprise/data/`.
 
 ## Why It Exists
 
@@ -84,7 +100,9 @@ The ranges deliberately avoid overlap. Manual mode is strict: the user must sele
 
 Each launched service is stored with its project, command, command ownership, framework, port, PID, process group, and lifecycle state (`starting`, `ready`, `failed`, or `stopped`). Multiprise reads the machine's listening ports to show both managed and external processes.
 
-This distinction matters. If a developer started a service in another terminal, Multiprise should report an external instance rather than pretending it launched that process. Managed processes can be stopped as a group so child watchers do not remain headless after the parent command exits.
+This distinction matters. If a developer started a service in another terminal, Multiprise should report an external instance rather than pretending it launched that process. Managed processes run in their own process group, so the real server started by `npm run dev` is recognised as part of the service, and stopping it also stops child watchers instead of leaving them headless.
+
+Quitting Multiprise stops every service it launched, including dependency installs and builds still in progress, before the app exits. Docker Compose services are left running because they are managed by Docker; stop them from the project before quitting if you want them down.
 
 Docker Compose definitions are shown separately and remain manually controlled. The project-level Launch action starts regular development services, not Docker services.
 
@@ -127,7 +145,7 @@ Running frontends can open in the system browser or inside Multiprise. The embed
 - docked DevTools;
 - detaching a live tab into its own controlled Multiprise window and attaching the same view back without reloading it.
 
-Service URL actions use main-process IPC for reliable clipboard writes and system-browser opening from sandboxed renderer builds. Embedded pages are sandboxed, context-isolated, and restricted to HTTP(S) navigation. This preserves the convenience of an integrated preview without giving project pages access to Multiprise's privileged bridge.
+Service URL actions use main-process IPC for reliable clipboard writes and system-browser opening from sandboxed renderer builds. Embedded pages are sandboxed, context-isolated, run in their own browser session, and restricted to HTTP(S) navigation. Permission requests from those pages — notifications, camera, geolocation, or launching other apps through custom URL schemes — are denied. This preserves the convenience of an integrated preview without giving project pages access to Multiprise's privileged bridge.
 
 ### 9. Package state correctly for macOS
 
@@ -145,15 +163,16 @@ The first packaged smoke test caught an important ordering bug: the backend modu
 
 ### 10. Publish the first release
 
-The source was cleaned of local state, generated builds, environment files, and retired prototype code before publication. `electron-builder` produces an Apple Silicon application bundle, DMG installer, and ZIP archive. Version `v0.1.0` is published as a private GitHub release while signing, notarization, and wider platform support are still pending.
+The source was cleaned of local state, generated builds, environment files, and retired prototype code before publication. `electron-builder` produces an Apple Silicon application bundle, DMG installer, and ZIP archive. Version `v0.1.0` is the first public release; signing, notarization, and wider platform support are still pending.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    UI["Vue 3 renderer"] -->|"window.multiprise IPC"| Preload["Preload bridge"]
+    UI["Vue 3 renderer"] -->|"window.vibe IPC"| Preload["Preload bridge"]
     Preload --> Main["Electron main process"]
     Main --> API["Local TypeScript orchestrator"]
+    UI -->|"HTTP + per-launch token"| API
     API --> Manifests["package.json, Cargo.toml, Compose"]
     API --> Ports["Port scanner"]
     API --> Processes["Child processes"]
@@ -163,7 +182,7 @@ flowchart LR
     Main --> Native["Dialogs, Finder, VS Code, system browser"]
 ```
 
-The renderer never receives unrestricted Node.js access. Privileged operations cross the narrow bridge in [`preload.cjs`](./preload.cjs), while Electron lifecycle and native integration live in [`main.cjs`](./main.cjs).
+The renderer never receives unrestricted Node.js access. Privileged operations cross the narrow bridge in [`preload.cjs`](./preload.cjs), while Electron lifecycle and native integration live in [`main.cjs`](./main.cjs). The renderer talks to the orchestrator over loopback HTTP using a random token generated at every launch; only the main window can obtain it through the bridge.
 
 ## Launch Flow
 
@@ -177,7 +196,7 @@ When a user launches a project, Multiprise performs this sequence:
 6. Build a missing `dist`, `build`, `.next`, or `.output` startup target once when a build script is available.
 7. Allocate or strictly validate one port per regular service.
 8. Start support services, then backend services, wait for readiness, and only then start frontend services.
-9. Mark a service ready only after its assigned port accepts connections; early exits and timeouts remain visible as failed states with final logs.
+9. Mark a service ready only after its assigned port accepts connections (frontends must also answer HTTP with a non-5xx status); early exits and timeouts remain visible as failed states with final logs.
 10. Keep healthy services alive when another stage fails and report partial readiness such as `1/2 ready`.
 
 ## Project Structure
@@ -186,8 +205,11 @@ When a user launches a project, Multiprise performs this sequence:
 multiprise/
 ├── backend/
 │   ├── src/
-│   │   ├── server.ts            # Express routes and orchestration API
+│   │   ├── index.ts             # Server startup, API token, and shutdown
+│   │   ├── server.ts            # Express routes, API guard, and orchestration
+│   │   ├── state.ts             # In-memory state and startup reconciliation
 │   │   ├── scanner.ts           # Project and runtime discovery
+│   │   ├── runtime.ts           # Node version resolution (.nvmrc, engines, fnm)
 │   │   ├── processes.ts         # Starting/ready/failed lifecycle and logs
 │   │   ├── preparation.ts       # Dependency install and missing-build preparation
 │   │   ├── failures.ts          # Actionable startup error classification
@@ -230,14 +252,14 @@ Run the launch-pipeline regression suite with:
 npm run test:backend
 ```
 
-The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
 
 ## Run From Source
 
 ### Requirements
 
 - macOS;
-- Node.js 20 or newer;
+- Node.js 20.19+ or 22.12+ (required by Vite 7);
 - npm;
 - the runtimes required by the projects you plan to launch.
 
@@ -266,7 +288,7 @@ npm run dev:web
 npm run dev:electron
 ```
 
-The combined `npm run dev` command is recommended because it coordinates startup order and environment variables.
+The combined `npm run dev` command is recommended because it coordinates startup order and environment variables. When running `npm run dev:api` on its own, the orchestrator prints its API token at startup; send it as the `x-multiprise-token` header (or set `MULTIPRISE_API_TOKEN` to choose one).
 
 ## Build and Package
 
@@ -289,15 +311,18 @@ Artifacts are written to `release/`. The current package target is Apple Silicon
 
 - Multiprise is local-first; tracked project data is stored on the machine.
 - The orchestration server binds to `127.0.0.1`, not the public network interface.
-- The renderer uses context isolation instead of direct Node.js access.
-- Embedded browser pages are sandboxed and limited to HTTP(S).
+- Every API request must carry a random token generated at launch and handed only to Multiprise's own window. Requests from other browser origins or with a non-loopback `Host` header are rejected, so websites you visit cannot drive the local API (including via DNS rebinding).
+- The renderer uses context isolation instead of direct Node.js access, cannot navigate away from the app, and cannot open new windows.
+- Embedded browser pages are sandboxed, limited to HTTP(S), kept in a separate session, and denied permission requests such as launching other apps.
+- Only one Multiprise instance runs at a time, and project state is written atomically; a file that cannot be parsed is set aside as `projects.json.corrupt-<timestamp>` instead of being overwritten.
 - Personal project paths, settings, logs, and generated release files are excluded from Git.
 - Project manifest scripts are trusted local instructions. Review an unfamiliar repository's scripts before launching it.
 
 ## Current Limitations
 
 - The packaged release currently targets Apple Silicon macOS only.
-- The app is not signed or notarized, so macOS may require an explicit first-open approval.
+- The app is not signed or notarized, so macOS requires the one-time approval described in [Install](#install).
+- Only `PATH` is imported from your login shell. Other variables exported in shell startup files (for example `JAVA_HOME`) are not passed to launched services; put them in the project's own environment files instead.
 - Windows and Linux packaging have not been implemented.
 - Resource graphs and historical metrics are not part of the first release.
 
@@ -317,4 +342,4 @@ Future work is tracked in [`upcoming-features.md`](./upcoming-features.md). Like
 
 ## License
 
-No open-source license has been selected yet. Until one is added, the source remains copyright-protected by default.
+Multiprise is released under the [MIT License](./LICENSE).

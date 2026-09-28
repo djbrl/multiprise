@@ -1,17 +1,24 @@
 import http from 'node:http'
+import { randomBytes } from 'node:crypto'
 import { createApp } from './server'
+import { stopAllProcesses } from './processes'
 import { createState, normalizeProjects, type AppState } from './state'
 
 export type BackendInstance = {
   server: http.Server
   port: number | null
   url: string | null
+  token: string
   state: AppState
 }
 
 type StartServerOptions = {
   port?: number
   strictPort?: boolean
+  // Every request must carry this token; a random one is generated when omitted.
+  token?: string
+  // Browser origins allowed to call the API (the renderer's origin; "null" for file://).
+  allowedOrigins?: string[]
 }
 
 const parsePort = (value?: string | null): number | undefined => {
@@ -61,7 +68,8 @@ const listenWithFallback = async (server: http.Server, preferredPort: number, st
 export const startServer = async (options: StartServerOptions = {}): Promise<BackendInstance> => {
   const state = await createState()
   await normalizeProjects(state)
-  const app = await createApp(state)
+  const token = options.token || randomBytes(32).toString('hex')
+  const app = await createApp(state, { token, allowedOrigins: options.allowedOrigins })
   const server = http.createServer(app)
 
   const requestedPort = options.port ?? envPort()
@@ -79,11 +87,17 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
     server,
     port,
     url,
+    token,
     state
   }
 }
 
 export const stopServer = async (backend?: BackendInstance | null): Promise<void> => {
+  // Managed services run in their own process groups, so they must be stopped explicitly.
+  await stopAllProcesses()
   if (!backend?.server) return
-  await new Promise<void>((resolve) => backend.server.close(() => resolve()))
+  await new Promise<void>((resolve) => {
+    backend.server.close(() => resolve())
+    backend.server.closeAllConnections?.()
+  })
 }

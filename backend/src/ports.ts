@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { exec } from 'node:child_process'
+import { createServer } from 'node:net'
 import { promisify } from 'node:util'
 
 const execAsync = promisify(exec)
@@ -104,4 +105,43 @@ export async function listListeningPorts(): Promise<ListeningPort[]> {
   } catch (err) {
     return []
   }
+}
+
+// Maps each PID to its process group id (macOS/Linux).
+export async function processGroups(pids: number[]): Promise<Map<number, number>> {
+  const groups = new Map<number, number>()
+  const unique = Array.from(new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0)))
+  if (!unique.length || process.platform === 'win32') return groups
+  const stdout = await execAsync(`ps -o pid=,pgid= -p ${unique.join(',')}`)
+    .then((result) => result.stdout)
+    // ps exits non-zero when some PIDs are gone but still prints the rest.
+    .catch((err: { stdout?: string }) => err.stdout ?? '')
+  for (const line of stdout.split('\n')) {
+    const [pid, pgid] = line.trim().split(/\s+/).map(Number)
+    if (Number.isInteger(pid) && Number.isInteger(pgid)) groups.set(pid, pgid)
+  }
+  return groups
+}
+
+function canBind(port: number, host: string) {
+  return new Promise<boolean>((resolve) => {
+    const server = createServer()
+    server.once('error', (err: NodeJS.ErrnoException) => resolve(err.code === 'EADDRNOTAVAIL' || err.code === 'EAFNOSUPPORT'))
+    server.once('listening', () => server.close(() => resolve(true)))
+    server.listen(port, host)
+  })
+}
+
+// lsof cannot see listeners owned by other users (e.g. root daemons), so confirm
+// a candidate really is free by binding it before handing it to a service.
+export async function pickAvailablePort(options: Parameters<typeof pickRandomPort>[0]): Promise<number | null> {
+  const used = new Set(options.used)
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const port = await pickRandomPort({ ...options, used })
+    if (!port) return null
+    if (await canBind(port, '127.0.0.1') && await canBind(port, '::1')) return port
+    used.add(port)
+    options.used.add(port)
+  }
+  return null
 }

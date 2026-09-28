@@ -97,6 +97,7 @@ export type ProcessInstance = {
   command?: string | null
   source: ProcessSource
   cwd?: string | null
+  reason?: 'assigned-port' | 'startup-conflict'
 }
 
 export type UsedPort = {

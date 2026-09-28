@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { appendProcessLog } from './processes'
+import { appendProcessLog, trackPreparation } from './processes'
 import { commandForScript, type PackageJsonMetadata } from './scanner'
 import { assertCommandAvailable } from './runtime'
 import { type DetectResponse, type Project } from './types'
@@ -72,8 +72,11 @@ async function runPreparationCommand(options: {
       cwd,
       env: processEnv,
       shell: true,
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // Its own process group, so stopping the service also stops the install/build tree.
+      detached: true
     })
+    trackPreparation(id, child)
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (data) => { stdout = pipeLines(id, 'stdout', data.toString(), stdout) })
