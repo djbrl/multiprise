@@ -31,6 +31,13 @@ export const SERVICE_ROLES = new Set(['backend', 'frontend', 'service'])
 // Launches in progress, keyed by project id; Stop and Delete flag them as cancelled.
 export type Launches = Map<string, { cancelled: boolean }>
 
+// The request each service was last launched with, so an automatic restart can repeat it.
+const lastLaunches = new Map<string, StartProjectPayload>()
+
+export function lastLaunchPayload(id: string): StartProjectPayload | undefined {
+  return lastLaunches.get(id)
+}
+
 export function cancelLaunch(launches: Launches, id: string) {
   const launch = launches.get(id)
   if (launch) launch.cancelled = true
@@ -136,7 +143,14 @@ async function buildStartEnv(options: {
 
 // Starts a service and resolves once it is ready. Failures are thrown as HttpErrors
 // carrying the status and message the API responds with.
-export async function launchService(state: AppState, launches: Launches, project: Project, payload: StartProjectPayload): Promise<ProjectView> {
+export async function launchService(
+  state: AppState,
+  launches: Launches,
+  project: Project,
+  payload: StartProjectPayload,
+  // A restart keeps the crashed run's output on screen instead of starting a fresh log.
+  options: { keepLogs?: boolean } = {}
+): Promise<ProjectView> {
   if (project.kind !== 'docker_compose' && getProcessPid(project.id)) {
     throw new HttpError(400, 'Project already running')
   }
@@ -158,6 +172,7 @@ export async function launchService(state: AppState, launches: Launches, project
   // Claimed synchronously so overlapping requests cannot both pass the running check.
   const launch = { cancelled: false }
   launches.set(project.id, launch)
+  lastLaunches.set(project.id, { ...payload, role })
   try {
     const usedPorts = new Set<number>()
     const listening = await listListeningPorts()
@@ -193,7 +208,7 @@ export async function launchService(state: AppState, launches: Launches, project
       throw new HttpError(400, 'Choose a port before launching this service')
     }
 
-    clearLogs(project.id)
+    if (!options.keepLogs) clearLogs(project.id)
     if (project.kind !== 'docker_compose') markProcessStarting(project.id)
     const ensureNotCancelled = () => {
       if (launch.cancelled) throw new LaunchCancelledError()

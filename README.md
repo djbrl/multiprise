@@ -235,6 +235,11 @@ When a user launches a project, Multiprise performs this sequence:
 9. Mark a service ready only after its assigned port accepts connections (frontends must also answer HTTP with a non-5xx status); early exits and timeouts remain visible as failed states with final logs.
 10. Keep healthy services alive when another stage fails and report partial readiness such as `1/2 ready`.
 
+Once a service is ready, Multiprise keeps watching it:
+
+- **Crashes are restarted.** A service that exits after it was ready is relaunched on the same port with the same command and environment, after 1 s, 5 s and 15 s, at most three times in ten minutes. The crash output stays in the log above the restart. Stopping the service cancels a pending restart; the `auto_restart` setting turns this off.
+- **Hangs are flagged, not killed.** Every 15 seconds a service that has answered HTTP must answer a request again (the probes identify themselves as `Multiprise health check`); services that never spoke HTTP only have to keep accepting connections. After two missed probes the service shows as failed with a "Not responding" message but keeps running, since it may be paused in a debugger, and it turns ready again as soon as it answers.
+
 ## Project Structure
 
 ```text
@@ -242,11 +247,15 @@ multiprise/
 ├── backend/
 │   ├── src/
 │   │   ├── index.ts             # Server startup, API token, and shutdown
-│   │   ├── server.ts            # Express routes, API guard, and orchestration
+│   │   ├── server.ts            # Express app assembly
+│   │   ├── routes/              # API routes by area (projects, services, ports, …)
+│   │   ├── launch.ts            # Starting and stopping a service
+│   │   ├── guard.ts             # API token, origin, and host checks
 │   │   ├── state.ts             # In-memory state and startup reconciliation
 │   │   ├── scanner.ts           # Project and runtime discovery
 │   │   ├── runtime.ts           # Node version resolution (.nvmrc, engines, fnm)
 │   │   ├── processes.ts         # Starting/ready/failed lifecycle and logs
+│   │   ├── supervisor.ts        # Health checks and crash restarts
 │   │   ├── events.ts            # Status, log, and project change events
 │   │   ├── logfiles.ts          # Per-run service log files on disk
 │   │   ├── preparation.ts       # Dependency install and missing-build preparation
@@ -296,7 +305,7 @@ Run the launch-pipeline regression suite with:
 npm run test:backend
 ```
 
-The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
 
 ## Run From Source
 

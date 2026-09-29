@@ -20,6 +20,11 @@ type ManagedProcess = {
   stderrBuffer: string
   stopping: boolean
   failureLocked: boolean
+  port?: number
+  // Set once the service answers HTTP; from then on it has to keep answering.
+  answersHttp: boolean
+  // The loopback address it answered on, asked first so each probe is one request.
+  httpHost?: string
 }
 
 const processes = new Map<string, ManagedProcess>()
@@ -194,15 +199,16 @@ function canConnect(host: string, port: number) {
   })
 }
 
-function httpStatus(host: string, port: number) {
+function httpStatus(host: string, port: number, timeout = 700) {
   return new Promise<number | null>((resolve) => {
     const req = request({
       host,
       port,
       path: '/',
       method: 'GET',
-      timeout: 700,
-      headers: { Accept: 'text/html,application/json;q=0.9,*/*;q=0.8' }
+      timeout,
+      // Identifies these requests in services that log every request.
+      headers: { Accept: 'text/html,application/json;q=0.9,*/*;q=0.8', 'User-Agent': 'Multiprise health check' }
     }, (response) => {
       response.resume()
       resolve(response.statusCode ?? null)
@@ -318,7 +324,9 @@ export async function startProcess(options: {
     stdoutBuffer: '',
     stderrBuffer: '',
     stopping: false,
-    failureLocked: false
+    failureLocked: false,
+    port,
+    answersHttp: false
   }
   processes.set(id, managed)
   setStatus(id, {
@@ -425,6 +433,46 @@ export async function startProcess(options: {
     onExit?.(exitCode, message)
     throw new Error(message)
   }
+}
+
+// Whether a ready service still answers on its port; null when there is nothing to check.
+// A blocked event loop still accepts TCP connections, so services that speak HTTP must
+// also answer a request. Services that never did (databases, raw TCP) only need to accept.
+export async function probeProcess(id: string, timeoutMs = 2000): Promise<boolean | null> {
+  const managed = processes.get(id)
+  const port = managed?.port
+  if (!managed || !port || !managed.readyAt || managed.stopping) return null
+  const preferred = managed.httpHost
+  const hosts = preferred ? [preferred, ...LOOPBACK_HOSTS.filter((host) => host !== preferred)] : LOOPBACK_HOSTS
+  for (const host of hosts) {
+    if (await httpStatus(host, port, timeoutMs) === null) continue
+    managed.answersHttp = true
+    managed.httpHost = host
+    return true
+  }
+  if (managed.answersHttp) return false
+  const connected = await Promise.all(LOOPBACK_HOSTS.map((host) => canConnect(host, port)))
+  return connected.some(Boolean)
+}
+
+// A running service that stopped answering shows as failed, but keeps running (and
+// keeps its Stop button): it may be busy or paused in a debugger, so it is not killed.
+export function markProcessUnresponsive(id: string, message: string) {
+  const status = getProcessStatus(id)
+  if (!processes.has(id) || status.phase !== 'ready') return
+  setStatus(id, { ...status, phase: 'failed', ready: false, error: message })
+  appendProcessLog(id, 'stderr', `[multiprise] ${message}`)
+}
+
+export function markProcessResponsive(id: string) {
+  const status = getProcessStatus(id)
+  if (!processes.has(id) || status.phase !== 'failed' || !status.running) return
+  setStatus(id, { ...status, phase: 'ready', ready: true, error: null })
+  appendProcessLog(id, 'stdout', '[multiprise] Responding again.')
+}
+
+export function managedProcessIds() {
+  return [...processes.keys()]
 }
 
 export async function stopProcess(id: string, timeoutMs = 4000) {

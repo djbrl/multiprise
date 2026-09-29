@@ -15,8 +15,8 @@ Ordered by priority within each section. Check items off as they land.
 - [x] **CLI** — `multiprise up`, `multiprise logs <service> -f`, `multiprise url <service>` over the existing local API.
 - [x] **MCP server** — `list_services`, `start`, `stop`, `tail_logs`, `get_url`, so coding agents reuse running services instead of spawning their own.
 - [ ] **Stable `*.localhost` hostnames** — a local reverse proxy mapping `api.project.localhost` to whatever port the service holds.
-- [ ] **Service health after startup** — periodic liveness checks so a hung server stops showing as ready.
-- [ ] **Crash detection with bounded auto-restart** — backoff, capped attempts.
+- [x] **Service health after startup** — periodic liveness checks so a hung server stops showing as ready.
+- [x] **Crash detection with bounded auto-restart** — backoff, capped attempts.
 - [ ] **Explicit service links** — declare dependencies and reference them in env (`API_URL={{services.api.url}}`); use the graph for start order. Replaces the single backend/frontend role guess.
 - [ ] **Per-service environment** — persisted env editor, warn when `.env.example` exists without `.env`, secrets in the macOS Keychain.
 - [ ] **Real Docker state** — read `docker compose ps --format json` instead of a persisted flag; stream `docker compose logs -f`.
@@ -41,6 +41,6 @@ Ordered by priority within each section. Check items off as they land.
 ## Code health
 
 - [ ] Split `renderer/src/App.vue` into composables (`useProjects`, `useLogs`, `useBrowserTabs`) and components.
-- [ ] Split `backend/src/server.ts` into route modules.
+- [x] Split `backend/src/server.ts` into route modules.
 - [ ] Share types between backend and renderer instead of redeclaring them.
 - [ ] Playwright end-to-end tests driving the Electron app (add project → launch → ready → stop) in CI.

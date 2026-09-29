@@ -4,6 +4,8 @@ import { createApp } from './server'
 import { stopAllProcesses } from './processes'
 import { removeDiscoveryFile, writeDiscoveryFile } from './discovery'
 import { dataDir } from './store'
+import { type Launches } from './launch'
+import { superviseServices, type Supervisor, type SupervisorOptions } from './supervisor'
 
 export { subscribe } from './events'
 import { createState, normalizeProjects, type AppState } from './state'
@@ -16,6 +18,7 @@ export type BackendInstance = {
   state: AppState
   // The data directory whose discovery file advertises this server, if any.
   advertisedIn: string | null
+  supervisor: Supervisor
 }
 
 type StartServerOptions = {
@@ -27,6 +30,7 @@ type StartServerOptions = {
   allowedOrigins?: string[]
   // Write the URL and token where the CLI and MCP server look for a running app.
   advertise?: boolean
+  supervisor?: SupervisorOptions
 }
 
 const parsePort = (value?: string | null): number | undefined => {
@@ -77,7 +81,8 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
   const state = await createState()
   await normalizeProjects(state)
   const token = options.token || randomBytes(32).toString('hex')
-  const app = await createApp(state, { token, allowedOrigins: options.allowedOrigins })
+  const launches: Launches = new Map()
+  const app = await createApp(state, { token, allowedOrigins: options.allowedOrigins }, launches)
   const server = http.createServer(app)
 
   const requestedPort = options.port ?? envPort()
@@ -108,12 +113,15 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
     url,
     token,
     state,
-    advertisedIn
+    advertisedIn,
+    supervisor: superviseServices(state, launches, options.supervisor)
   }
 }
 
 export const stopServer = async (backend?: BackendInstance | null): Promise<void> => {
   // Managed services run in their own process groups, so they must be stopped explicitly.
+  // Stopping services must not look like crashes to be restarted.
+  backend?.supervisor.stop()
   if (backend?.advertisedIn) {
     await removeDiscoveryFile(backend.advertisedIn).catch(() => {})
   }

@@ -70,6 +70,8 @@ export type Settings = {
   auto_port: boolean
   auto_install: boolean
   notifications: boolean
+  // Relaunch a service that crashes after it was ready (a few times, with backoff).
+  auto_restart: boolean
   port_base: number
   startup_timeout_ms: number
   scan_depth: number

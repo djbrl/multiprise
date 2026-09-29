@@ -101,7 +101,8 @@ function createMenuBar({ backend, subscribe, showMainWindow, iconPath, commandLi
   const serviceItem = (view, group) => {
     const { project, status } = view;
     const port = status.running ? project.port : null;
-    const detail = status.phase === 'ready' && port ? `  :${port}` : status.phase === 'starting' ? '  starting…' : status.phase === 'failed' ? '  failed' : '';
+    const failedLabel = status.running ? '  not responding' : '  failed';
+    const detail = status.phase === 'ready' && port ? `  :${port}` : status.phase === 'starting' ? '  starting…' : status.phase === 'failed' ? failedLabel : '';
     const submenu = [];
     if (status.phase === 'ready' && port) {
       submenu.push(
@@ -173,7 +174,8 @@ function createMenuBar({ backend, subscribe, showMainWindow, iconPath, commandLi
     if (!project) return;
 
     if (status.phase === 'failed' && previous !== 'failed' && !reportedByMenu.has(id)) {
-      notify(previous === 'ready' ? `${project.name} crashed` : `${project.name} failed to start`, status.error, showMainWindow);
+      const title = status.running ? `${project.name} is not responding` : previous === 'ready' ? `${project.name} crashed` : `${project.name} failed to start`;
+      notify(title, status.error, showMainWindow);
     } else if (status.phase === 'ready' && previous === 'starting') {
       const since = startingSince.get(id);
       if (since && Date.now() - since >= SLOW_START_MS) {
