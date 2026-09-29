@@ -7,7 +7,11 @@ One static file, `index.html`. No build step. Preview with `python3 -m http.serv
 - `links.repo`: the public GitHub repo. The GitHub links stay hidden while it is `null`.
 - `version`, `requirements`, `license`: shown under the closing Download button and in the footer.
 
-**Screenshots** in `img/` are real captures of the running app (demo projects in a scratch profile), 1920 px wide, 16:10. Missing files show a placeholder frame. The hero, the terminal-tabs scene and the port numbers on the ruler are illustrations; the wiring section uses the ports from the real launch in `img/launch.png`.
+**Design:** light, Linear-style layout (left-aligned claims, hairline structure, line-art figures). Fonts from Fontshare: General Sans (headings, same face as the wordmark), Switzer (text), JetBrains Mono (code). Colors follow `brand/README.md` (Ink `#1C1917`, Orange `#EA580C`).
+
+**Brand files** (`icon.svg`, `lockup.svg`, `apple-touch-icon.png`, `og.png`) are generated copies of `brand/`: edit the sources there and run `npm run generate:icons`, never the copies here.
+
+**Screenshots** in `img/` are real captures of the running app in its light theme (demo projects in a scratch profile), 1920 px wide; `add.png` is the same kind of capture cropped to the Add Projects dialog. Missing files show a placeholder frame. The figures and the ruler's example ports are illustrations; the wiring card uses the ports from the real launch in `img/launch.png` (api :5064, web :5309), so update both together if you recapture.
 
 **Live:** https://multiprise.vercel.app (Vercel project `bountbi/multiprise`).
 
