@@ -6,6 +6,7 @@ import { removeDiscoveryFile, writeDiscoveryFile } from './discovery'
 import { dataDir } from './store'
 import { type Launches } from './launch'
 import { superviseServices, type Supervisor, type SupervisorOptions } from './supervisor'
+import { watchDockerProjects, type DockerWatcher } from './docker'
 
 export { subscribe } from './events'
 import { createState, normalizeProjects, type AppState } from './state'
@@ -19,6 +20,7 @@ export type BackendInstance = {
   // The data directory whose discovery file advertises this server, if any.
   advertisedIn: string | null
   supervisor: Supervisor
+  docker: DockerWatcher
 }
 
 type StartServerOptions = {
@@ -31,6 +33,7 @@ type StartServerOptions = {
   // Write the URL and token where the CLI and MCP server look for a running app.
   advertise?: boolean
   supervisor?: SupervisorOptions
+  dockerIntervalMs?: number
 }
 
 const parsePort = (value?: string | null): number | undefined => {
@@ -114,7 +117,8 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
     token,
     state,
     advertisedIn,
-    supervisor: superviseServices(state, launches, options.supervisor)
+    supervisor: superviseServices(state, launches, options.supervisor),
+    docker: watchDockerProjects(state, options.dockerIntervalMs)
   }
 }
 
@@ -122,6 +126,7 @@ export const stopServer = async (backend?: BackendInstance | null): Promise<void
   // Managed services run in their own process groups, so they must be stopped explicitly.
   // Stopping services must not look like crashes to be restarted.
   backend?.supervisor.stop()
+  backend?.docker.stop()
   if (backend?.advertisedIn) {
     await removeDiscoveryFile(backend.advertisedIn).catch(() => {})
   }

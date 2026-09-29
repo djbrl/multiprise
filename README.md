@@ -136,7 +136,7 @@ This distinction matters. If a developer started a service in another terminal, 
 
 Quitting Multiprise stops every service it launched, including dependency installs and builds still in progress, before the app exits. Docker Compose services are left running because they are managed by Docker; stop them from the project before quitting if you want them down.
 
-Docker Compose definitions are shown separately and remain manually controlled. The project-level Launch action starts regular development services, not Docker services.
+Docker Compose definitions are shown separately and remain manually controlled. The project-level Launch action starts regular development services, not Docker services. Their status comes from `docker compose ps` every few seconds rather than from what Multiprise last did, so containers started or stopped in a terminal, left running while the app was closed, or crashing show up as they are: a container that exits with an error, keeps restarting, or fails its health check marks the service failed with the reason. The containers' output streams into the service log (`docker compose logs --follow`), and the service URL uses the first published port that is not a common database port.
 
 Closing the window does not stop anything. A menu bar icon shows how many services are running and lets you start, stop, retry, or open each one without bringing the window back. When Multiprise is in the background, a notification reports a service that crashes or one that becomes ready after a slow start; both can be turned off in Settings.
 
@@ -256,6 +256,7 @@ multiprise/
 │   │   ├── runtime.ts           # Node version resolution (.nvmrc, engines, fnm)
 │   │   ├── processes.ts         # Starting/ready/failed lifecycle and logs
 │   │   ├── supervisor.ts        # Health checks and crash restarts
+│   │   ├── docker.ts            # Docker Compose status and log streaming
 │   │   ├── events.ts            # Status, log, and project change events
 │   │   ├── logfiles.ts          # Per-run service log files on disk
 │   │   ├── preparation.ts       # Dependency install and missing-build preparation
@@ -305,7 +306,7 @@ Run the launch-pipeline regression suite with:
 npm run test:backend
 ```
 
-The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
 
 ## Run From Source
 

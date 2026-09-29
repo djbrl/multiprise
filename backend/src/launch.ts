@@ -22,6 +22,7 @@ import { prepareService } from './preparation'
 import { projectRoleFallback } from './roles'
 import { resolveProjectNodeRuntime } from './runtime'
 import { spawnCommand } from './commands'
+import { dockerStatus, followDockerLogsFrom, refreshDockerProject } from './docker'
 import { HttpError, isValidPort } from './http'
 
 export const DEFAULT_DOCKER_STOP = 'docker compose down'
@@ -43,27 +44,10 @@ export function cancelLaunch(launches: Launches, id: string) {
   if (launch) launch.cancelled = true
 }
 
-export const buildProjectView = (project: Project): ProjectView => {
-  if (project.kind === 'docker_compose') {
-    return {
-      project,
-      status: {
-        phase: project.docker_running ? 'ready' : 'stopped',
-        running: !!project.docker_running,
-        ready: !!project.docker_running,
-        pid: null,
-        started_at: project.docker_started_at ?? null,
-        ready_at: project.docker_started_at ?? null,
-        error: project.last_error ?? null,
-        exit_code: project.last_exit_code ?? null
-      }
-    }
-  }
-  return {
-    project,
-    status: getProcessStatus(project.id)
-  }
-}
+export const buildProjectView = (project: Project): ProjectView => ({
+  project,
+  status: project.kind === 'docker_compose' ? dockerStatus(project) : getProcessStatus(project.id)
+})
 
 // A service keeps the port it had last time whenever that port is still free,
 // so its URL, bookmarks and OAuth callbacks survive a relaunch.
@@ -246,9 +230,9 @@ export async function launchService(
       project.last_error = null
 
       if (project.kind === 'docker_compose') {
+        followDockerLogsFrom(project, new Date().toISOString())
         await spawnCommand(command, cwd, env, (stream, line) => appendProcessLog(project.id, stream, line))
-        project.docker_running = true
-        project.docker_started_at = new Date().toISOString()
+        await refreshDockerProject(state, project, true)
         await persistProjects(state)
         return buildProjectView(project)
       }
@@ -315,9 +299,7 @@ export async function stopService(state: AppState, launches: Launches, project: 
     } catch (err) {
       throw new HttpError(400, `Failed to stop docker project. ${err instanceof Error ? err.message : ''}`.trim())
     }
-    project.docker_running = false
-    project.docker_started_at = null
-    await persistProjects(state)
+    await refreshDockerProject(state, project, true)
     return buildProjectView(project)
   }
 

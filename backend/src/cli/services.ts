@@ -51,8 +51,8 @@ const rootOf = (view: ProjectView) => view.project.root_path || view.project.pat
 
 function toService(view: ProjectView, projectName: string): Service {
   const { project, status } = view
-  // Compose files declare their own ports; for other services this is the current or last port.
-  const port = project.kind === 'docker_compose' ? null : project.port ?? null
+  // The current or last port; for Docker Compose, the first published port that is not a data store.
+  const port = project.port ?? null
   return {
     id: project.id,
     name: project.name,
@@ -60,8 +60,8 @@ function toService(view: ProjectView, projectName: string): Service {
     path: project.path,
     role: projectRoleFallback(project),
     kind: project.kind,
-    phase: project.kind === 'docker_compose' ? (project.docker_running ? 'ready' : 'stopped') : status.phase,
-    running: project.kind === 'docker_compose' ? Boolean(project.docker_running) : status.running,
+    phase: status.phase,
+    running: status.running,
     port,
     url: port && status.running && status.phase === 'ready' ? serviceUrl(port) : null,
     pid: status.pid ?? null,

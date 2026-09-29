@@ -30,6 +30,15 @@ export type Project = {
   created_at: string
 }
 
+// One container of a Docker Compose service, from `docker compose ps`.
+export type ContainerState = {
+  service: string
+  state: string
+  health: string
+  exit_code: number | null
+  ports: number[]
+}
+
 export type ProcessStatus = {
   phase: ProcessPhase
   running: boolean
@@ -39,6 +48,7 @@ export type ProcessStatus = {
   ready_at?: string | null
   error?: string | null
   exit_code?: number | null
+  containers?: ContainerState[]
 }
 
 export type ProjectView = {

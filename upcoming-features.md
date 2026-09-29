@@ -19,7 +19,7 @@ Ordered by priority within each section. Check items off as they land.
 - [x] **Crash detection with bounded auto-restart** — backoff, capped attempts.
 - [ ] **Explicit service links** — declare dependencies and reference them in env (`API_URL={{services.api.url}}`); use the graph for start order. Replaces the single backend/frontend role guess.
 - [ ] **Per-service environment** — persisted env editor, warn when `.env.example` exists without `.env`, secrets in the macOS Keychain.
-- [ ] **Real Docker state** — read `docker compose ps --format json` instead of a persisted flag; stream `docker compose logs -f`.
+- [x] **Real Docker state** — read `docker compose ps --format json` instead of a persisted flag; stream `docker compose logs -f`.
 - [ ] **Signing, notarization and auto-update** — `electron-updater` against the `latest-mac.yml` electron-builder already produces.
 
 ## UI/UX

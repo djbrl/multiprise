@@ -13,6 +13,7 @@ import {
 import { detectProject, discoverProjectServices } from '../scanner'
 import { forgetLogs, stopProcess } from '../processes'
 import { deleteLogFiles } from '../logfiles'
+import { forgetDockerProject } from '../docker'
 import { openInFileManager, openInVSCode } from '../commands'
 import { findProjectIcon, resolveProjectIcon } from '../icons'
 import { buildProjectView, cancelLaunch } from '../launch'
@@ -224,6 +225,7 @@ export function registerProjectRoutes(app: Express, { state, launches, recentLis
     state.projects = state.projects.filter((entry) => entry.id !== id)
     await persistProjects(state)
     forgetLogs(id)
+    forgetDockerProject(id)
     deleteLogFiles(id)
     res.json({ ok: true })
   }))
