@@ -752,7 +752,10 @@ app.on('before-quit', (event) => {
     .catch((err) => console.error('[multiprise] shutdown failed:', err))
     .finally(() => {
       shutdownState = 'done';
-      app.quit();
+      // When nothing needs stopping, shutdown settles in the microtasks Electron drains while
+      // it is still emitting this event (e.g. for a quit started by its SIGTERM handler). A
+      // quit issued there is overwritten by the one being cancelled, so retry on a later tick.
+      setImmediate(() => app.quit());
     });
 });
 
