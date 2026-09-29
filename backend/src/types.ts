@@ -93,6 +93,8 @@ export type Settings = {
   // Serve every service at a stable http://<service>.<project>.localhost:<proxy_port> name.
   hostnames: boolean
   proxy_port: number
+  // Set once the first-run welcome has been completed or skipped.
+  onboarded: boolean
   port_base: number
   startup_timeout_ms: number
   scan_depth: number

@@ -152,13 +152,30 @@ export async function serviceEnvironment(state: AppState, project: Project) {
   return env
 }
 
+
 const EXAMPLE_FILES = ['.env.example', '.env.sample', '.env.template', '.env.dist']
 const ENV_FILES = ['.env', '.env.local', '.env.development', '.env.development.local']
 
-function envKeys(text: string) {
-  return text.split(/\r?\n/)
-    .map((line) => line.replace(/^\s*export\s+/, '').match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1])
-    .filter((key): key is string => !!key)
+// KEY=value lines of an env file; quotes and trailing comments are dropped from values.
+function envEntries(text: string) {
+  const entries: Array<{ key: string; value: string }> = []
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.replace(/^\s*export\s+/, '').match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
+    if (!match) continue
+    let value = match[2].trim()
+    const quoted = value.match(/^(['"])(.*?)\1(?:\s+#.*)?$/)
+    value = quoted ? quoted[2] : value.replace(/\s+#.*$/, '')
+    entries.push({ key: match[1], value })
+  }
+  return entries
+}
+
+export type DetectedVariable = {
+  key: string
+  // The value the example file shows (usually a placeholder).
+  example: string
+  // Whether a .env file sets it; its value is never read back to the app.
+  in_env_file: boolean
 }
 
 export type EnvFileStatus = {
@@ -167,6 +184,8 @@ export type EnvFileStatus = {
   has_env: boolean
   // Variables the example declares that neither an env file nor Multiprise provides.
   missing: string[]
+  // Every variable the example declares, in its order.
+  variables: DetectedVariable[]
 }
 
 // A service folder (or its project root) with a .env.example but no .env usually will not start.
@@ -176,20 +195,26 @@ export async function envFileStatus(project: Project): Promise<EnvFileStatus> {
     for (const name of EXAMPLE_FILES) {
       const example = await fs.readFile(path.join(folder, name), 'utf8').catch(() => null)
       if (example === null) continue
-      const present = new Set<string>([...Object.keys(project.env ?? {}), ...(project.secret_env ?? [])])
+      const inEnvFiles = new Set<string>()
       let hasEnv = false
       for (const envName of ENV_FILES) {
         const text = await fs.readFile(path.join(folder, envName), 'utf8').catch(() => null)
         if (text === null) continue
         hasEnv = true
-        envKeys(text).forEach((key) => present.add(key))
+        envEntries(text).forEach((entry) => inEnvFiles.add(entry.key))
       }
+      const configured = new Set<string>([...Object.keys(project.env ?? {}), ...(project.secret_env ?? [])])
+      const seen = new Set<string>()
+      const variables = envEntries(example)
+        .filter((entry) => !seen.has(entry.key) && seen.add(entry.key))
+        .map((entry) => ({ key: entry.key, example: entry.value, in_env_file: inEnvFiles.has(entry.key) }))
       return {
         example: path.relative(project.path, path.join(folder, name)) || name,
         has_env: hasEnv,
-        missing: envKeys(example).filter((key) => !present.has(key))
+        missing: variables.filter((variable) => !variable.in_env_file && !configured.has(variable.key)).map((variable) => variable.key),
+        variables
       }
     }
   }
-  return { example: null, has_env: false, missing: [] }
+  return { example: null, has_env: false, missing: [], variables: [] }
 }

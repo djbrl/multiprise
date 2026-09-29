@@ -134,7 +134,16 @@ test('a .env.example without a .env is reported, in the editor and in the launch
   const { ids } = await shop(api, { '.env.example': 'DATABASE_URL=\nexport STRIPE_KEY=\n# comment\nGREETING=hi\n' })
   await api.call('PUT', `/api/projects/${ids.api}/environment`, { variables: [{ key: 'GREETING', value: 'hello' }] })
   const described = (await api.call('GET', `/api/projects/${ids.api}/environment`)).body
-  assert.deepEqual(described.env_file, { example: '../.env.example', has_env: false, missing: ['DATABASE_URL', 'STRIPE_KEY'] })
+  assert.deepEqual(described.env_file, {
+    example: '../.env.example',
+    has_env: false,
+    missing: ['DATABASE_URL', 'STRIPE_KEY'],
+    variables: [
+      { key: 'DATABASE_URL', example: '', in_env_file: false },
+      { key: 'STRIPE_KEY', example: '', in_env_file: false },
+      { key: 'GREETING', example: 'hi', in_env_file: false }
+    ]
+  })
 
   assert.equal((await api.call('POST', `/api/projects/${ids.api}/start`, { role: 'backend' })).status, 200)
   const logs = (await api.call('GET', `/api/projects/${ids.api}/logs`)).body.logs.map((entry) => entry.line).join('\n')
@@ -157,4 +166,19 @@ test('variables and links survive a restart, and deleting a service removes link
   assert.equal((await second.call('DELETE', `/api/projects/${ids.api}`)).status, 200)
   assert.deepEqual((await second.call('GET', `/api/projects/${ids.web}/environment`)).body.links, [])
   assert.equal(stored.has(`${ids.api}/KEY`), false)
+})
+
+test('detected variables report whether a .env file sets them, never its values', async (context) => {
+  const api = await startApi(context)
+  const { ids } = await shop(api, {
+    '.env.example': 'API_KEY="your key here" # from the dashboard\nexport REGION=eu\nAPI_KEY=duplicate\n',
+    '.env': 'API_KEY=real-secret-value\n'
+  })
+  const described = (await api.call('GET', `/api/projects/${ids.api}/environment`)).body
+  assert.deepEqual(described.env_file.variables, [
+    { key: 'API_KEY', example: 'your key here', in_env_file: true },
+    { key: 'REGION', example: 'eu', in_env_file: false }
+  ])
+  assert.deepEqual(described.env_file.missing, ['REGION'])
+  assert.doesNotMatch(JSON.stringify(described), /real-secret-value/)
 })

@@ -5,6 +5,7 @@ const path = require('path');
 const { createMenuBar } = require('./menu-bar.cjs');
 const { commandLineToolStatus, installCommandLineTool, isCommandLineToolInstalled } = require('./cli-install.cjs');
 const { hydrateShellPath } = require('./shell-path.cjs');
+const { createSplashWindow, renderLoadingPage, setSplashStatus } = require('./splash.cjs');
 let startServer;
 let stopServer;
 let subscribeToBackend;
@@ -56,66 +57,6 @@ const checkDevServer = (url) =>
     });
   });
 
-const renderLoadingPage = (window, message) => {
-  const html = `<!doctype html>
-  <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>Loading multiprise</title>
-      <style>
-        :root { color-scheme: light; }
-        html, body { height: 100%; margin: 0; background: #f3f4f6; color: #252529; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-        .wrap { height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; }
-        .spinner { width: 28px; height: 28px; border-radius: 999px; border: 3px solid #d9dbe0; border-top-color: #EA580C; animation: spin 0.9s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-      </style>
-    </head>
-    <body>
-      <div class="wrap">
-        <div class="spinner"></div>
-        <div>${message}</div>
-      </div>
-    </body>
-  </html>`;
-
-  const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-  window.loadURL(dataUrl);
-};
-
-const renderSplashPage = (window) => {
-  const html = `<!doctype html>
-  <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>multiprise</title>
-      <style>
-        :root { color-scheme: light; }
-        html, body { height: 100%; margin: 0; background: #f3f4f6; color: #252529; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-        .wrap { height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; }
-        .spinner { width: 18px; height: 18px; border-radius: 999px; border: 2px solid #d9dbe0; border-top-color: #EA580C; animation: spin 0.9s linear infinite; }
-        .mark { position: relative; width: 58px; height: 58px; border: 1.5px solid #FDBA74; border-radius: 18px; background: #FFF7ED; display: flex; align-items: center; justify-content: center; color: #EA580C; box-sizing: border-box; }
-        .strip { width: 34px; height: 20px; border: 2.5px solid currentColor; border-radius: 7px; display: flex; align-items: center; justify-content: space-evenly; box-sizing: border-box; }
-        .slot { width: 2.5px; height: 9px; border-radius: 2px; background: currentColor; }
-        .light { position: absolute; top: 7px; right: 7px; width: 5px; height: 5px; border-radius: 999px; background: #F97316; }
-        .title { font-family: 'Avenir Next', 'Segoe UI', sans-serif; font-size: 22px; font-weight: 600; letter-spacing: -.03em; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-      </style>
-    </head>
-    <body>
-      <div class="wrap">
-        <div class="mark"><span class="strip"><span class="slot"></span><span class="slot"></span><span class="slot"></span></span><span class="light"></span></div>
-        <div class="title">multiprise</div>
-        <div class="spinner"></div>
-      </div>
-    </body>
-  </html>`;
-
-  const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-  window.loadURL(dataUrl);
-};
-
 const safeLoadUrl = async (window, url) => {
   try {
     await window.loadURL(url);
@@ -136,7 +77,7 @@ const safeLoadFile = async (window, filePath) => {
 
 const loadDevServer = async (window, url, options = {}) => {
   const { keepTrying = false, intervalMs = 400, attempts = 15 } = options;
-  renderLoadingPage(window, 'Waiting for the renderer...');
+  renderLoadingPage(window, 'Loading the interface…');
 
   const attemptLoad = async () => {
     if (window.isDestroyed()) return false;
@@ -195,22 +136,6 @@ const loadRenderer = async (window) => {
 
   await loadDevServer(window, defaultDevUrl, { attempts: 25, keepTrying: true });
 };
-
-const createSplashWindow = () => {
-  splashWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    transparent: false,
-    frame: false,
-    resizable: false,
-    movable: true,
-    alwaysOnTop: true,
-    backgroundColor: '#f3f4f6',
-    show: true
-  });
-  renderSplashPage(splashWindow);
-};
-
 
 const normalizeBrowserUrl = (value, allowBlank = false) => {
   const raw = String(value || '').trim();
@@ -614,7 +539,7 @@ const createWindow = () => {
   });
 
   loadRenderer(mainWindow).catch(() => {
-    renderLoadingPage(mainWindow, 'Waiting for the renderer...');
+    renderLoadingPage(mainWindow, 'Loading the interface…');
   });
 };
 
@@ -669,16 +594,19 @@ app.whenReady().then(async () => {
   }
   restrictBrowserPermissions(session.defaultSession);
   restrictBrowserPermissions(session.fromPartition(BROWSER_PARTITION));
-  createSplashWindow();
+  splashWindow = createSplashWindow();
 
   try {
+    setSplashStatus(splashWindow, 'Reading your shell settings…');
     await hydrateShellPath();
+    setSplashStatus(splashWindow, 'Starting the service manager…');
     if (app.isPackaged) {
       process.env.MULTIPRISE_DATA_DIR = path.join(app.getPath('userData'), 'data');
     }
     const backendPort = app.isPackaged ? 0 : undefined;
     ({ startServer, stopServer, subscribe: subscribeToBackend } = loadBackendModule());
     backend = await startServer({ port: backendPort, allowedOrigins: rendererOrigins(), advertise: true });
+    setSplashStatus(splashWindow, 'Opening your projects…');
   } catch (err) {
     closeSplashWindow();
     dialog.showErrorBox(

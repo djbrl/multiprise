@@ -68,15 +68,17 @@ Both are in **Settings → Stable hostnames** (the `proxy_port` and `hostnames` 
 - **Command palette (⌘K):** jump to a project; start, stop, restart or open a service; edit its environment; add projects; switch theme; search the logs. Other shortcuts: ⌘F search logs, ⌘↩ launch the selected project, ⌘. stop it, ⌘1–⌘9 switch projects, ⌘O add projects, ⌘, settings.
 - **Logs:** one merged view per project with each service's name in its color. Filter by errors, warnings, stderr or service, search with highlighting, and pause the view while reading (new lines are counted, not lost). URLs are links (local ones open in the in-app browser) and source locations such as `src/routes.ts:12:5` open in VS Code at that line, or in the file's default app; only files inside the project can be opened.
 - **Failures come with a fix:** a failed start shows buttons for its cause: retry on a new port, install dependencies and retry, build and retry, open the service's environment, or change the startup timeout. A service that stopped answering offers Restart.
+- **First run:** a short welcome explains what Multiprise does, adds your first projects (showing the services and commands it found) and offers the CLI and MCP setup. It can be shown again from the command palette.
+- **Cancel a launch:** while a project or service is starting, its Launch/Start button becomes Cancel, which stops what that launch started.
 - **Drag and drop:** drop project folders anywhere on the window to add them. Multiprise shows the services it found and their commands before anything is saved.
 
 ## Service Links and Environment
 
-Each service's **Environment…** button (in its details) edits the variables it starts with and the services it depends on.
+Each service's **Environment…** button (in its details) edits the variables it starts with and the services it needs running first. Every variable its `.env.example` declares gets its own field, showing whether a `.env` file already sets it; values set here win over `.env` files.
 
 - **Variables** are added to what Multiprise sets itself (`PORT`, `BACKEND_PORT`, `FRONTEND_PORT`, …) and win over it, except `PORT`. A value can point at another service: `{{services.api.url}}`, `{{services.api.port}}` or `{{services.api.host_url}}`, where `api` is a service in the same project, `project/service`, or a service id.
 - **Secrets** are stored encrypted in `secrets.json` with a key held in the macOS Keychain (Electron `safeStorage`), are never shown again, and never reach `projects.json` or the API.
-- **Depends on** lists services that start first whenever this one starts, in dependency order, with their own settings; loops are refused. Without links, the backend-before-frontend order and linked ports work as before.
+- **Start first** picks other services of the same project that start before this one whenever it starts, in dependency order, with their own settings; loops are refused. Without it, the backend-before-frontend order and linked ports work as before. (The API also accepts links across projects.)
 - A **`.env.example`** (or `.env.sample`, `.env.template`) without a `.env` is flagged in the editor, with a button to add the missing variables, and in the service log when it starts.
 
 ## Why It Exists
@@ -130,6 +132,8 @@ Multiprise now discovers services directly from files the project already owns:
 - `package.json` scripts for npm, pnpm, Yarn, and Bun projects;
 - `Cargo.toml` for Rust services;
 - `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, or `compose.yaml` for optional Docker services.
+
+Hidden folders (such as `.claude` or `.github`) and git worktrees inside a project (extra checkouts of the same repository) are skipped, so their copies of the services are not listed again; submodules still count.
 
 For JavaScript services, Multiprise scores scripts that actually exist. `dev` and `start:dev` are strongly preferred, followed by `develop`, `watch`, and `serve`; `start` is a production fallback and `preview` is last. Commands containing production signals such as `node dist/`, `next start`, or `NODE_ENV=production` are penalized. An npm `start` script is launched as `npm start`; other npm scripts use `npm run <script>`. A command edited by the user becomes user-owned and is never overwritten by a rescan; automatic commands continue following the manifest.
 

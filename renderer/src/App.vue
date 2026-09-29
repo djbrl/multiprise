@@ -5,6 +5,7 @@ import ServiceConfigDialog from './components/ServiceConfigDialog.vue'
 import LogViewer, { type LogEntry } from './components/LogViewer.vue'
 import ServiceFailure, { type FailureAction } from './components/ServiceFailure.vue'
 import CommandPalette, { type PaletteCommand } from './components/CommandPalette.vue'
+import Onboarding from './components/Onboarding.vue'
 import {
   panelClass,
   panelProjectClass,
@@ -118,6 +119,7 @@ type Settings = {
   auto_restart: boolean
   hostnames: boolean
   proxy_port: number
+  onboarded: boolean
   port_base: number
   startup_timeout_ms: number
   scan_depth: number
@@ -484,6 +486,7 @@ const settings = reactive<Settings>({
   auto_restart: true,
   hostnames: true,
   proxy_port: 7331,
+  onboarded: false,
   port_base: 3000,
   startup_timeout_ms: 20000,
   scan_depth: 8,
@@ -497,6 +500,7 @@ const settingsDraft = reactive<Settings>({
   auto_restart: true,
   hostnames: true,
   proxy_port: 7331,
+  onboarded: false,
   port_base: 3000,
   startup_timeout_ms: 20000,
   scan_depth: 8,
@@ -1613,6 +1617,10 @@ async function handleDrop(event: DragEvent) {
     .map((file) => window.vibe?.pathForFile?.(file) ?? '')
     .filter(Boolean)
   if (!paths.length) return
+  if (onboardingOpen.value) {
+    await onboardingRef.value?.addFolders(paths)
+    return
+  }
   selectedFolders.value = Array.from(new Set([...selectedFolders.value, ...paths]))
   if (pickerOpen.value) await refreshProjectPreviews()
   else await openPicker()
@@ -1983,6 +1991,11 @@ async function startProject(project: ProjectView, options: {
     return true
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to start service'
+    // Cancelled from the Cancel button: nothing went wrong.
+    if (message === 'Launch cancelled') {
+      await loadProjects()
+      return false
+    }
     error.value = message
     setActionError(project.project.id, message)
     await loadProjects()
@@ -2336,8 +2349,32 @@ function groupHasRunning(group: Group<ProjectView>) {
   return groupRunningCount(group) > 0
 }
 
+// A launch in progress can be cancelled: its remaining services are skipped and the
+// ones it already started (or is starting) are stopped.
+const groupLaunchCancelled = reactive<Record<string, boolean>>({})
+const groupLaunchStarted = new Map<string, Set<string>>()
+
+// Starting as far as the backend knows, or a start request not yet acknowledged; a service
+// that is already running is not "starting" while the app refreshes around it.
+function isStarting(service: ProjectView) {
+  return serviceStarting(service) || (isActionLoading('start', service.project.id) && !service.status.running)
+}
+
+async function cancelStart(service: ProjectView) {
+  await stopProject(service)
+}
+
+async function cancelGroupLaunch(group: Group<ProjectView>) {
+  groupLaunchCancelled[group.key] = true
+  const started = groupLaunchStarted.get(group.key) ?? new Set<string>()
+  const targets = group.items.filter((service) => !isDockerService(service) && (started.has(service.project.id) || isStarting(service)))
+  await Promise.all(targets.map((service) => stopProject(service)))
+}
+
 async function launchGroup(group: Group<ProjectView>, manualPorts?: Record<string, number>) {
   if (groupActionLoading[group.key]) return
+  groupLaunchCancelled[group.key] = false
+  groupLaunchStarted.set(group.key, new Set())
   if (!settings.auto_port && !manualPorts) {
     requestManualPorts({ kind: 'group', groupKey: group.key })
     return
@@ -2380,7 +2417,9 @@ async function launchGroup(group: Group<ProjectView>, manualPorts?: Record<strin
     const launchStage = async (services: ProjectView[]) => {
       let allReady = true
       for (const service of services) {
+        if (groupLaunchCancelled[group.key]) return false
         if (serviceReady(service)) continue
+        groupLaunchStarted.get(group.key)?.add(service.project.id)
         const role = serviceRole(service)
         const port = manualPorts?.[service.project.id] ?? (role === 'backend'
           ? backendPort
@@ -2398,7 +2437,9 @@ async function launchGroup(group: Group<ProjectView>, manualPorts?: Record<strin
 
     await launchStage(supportServices)
     const backendsReady = await launchStage(backendServices)
-    if (backendsReady) {
+    if (groupLaunchCancelled[group.key]) {
+      // Nothing to report: the user stopped it.
+    } else if (backendsReady) {
       await launchStage(frontendServices)
     } else {
       for (const frontend of frontendServices.filter((service) => !service.status.running)) {
@@ -2510,8 +2551,12 @@ function initializeNavigationSession() {
   }
 }
 
+// After a reload, reopen the project that was open, once; later project loads (every start
+// refreshes them) must not pull the user away from where they are.
 function restoreSelectedGroup(groups: Group<ProjectView>[]) {
-  if (!restoreProjectOnLoad.value || selectedGroupKey.value) return
+  if (!restoreProjectOnLoad.value) return
+  restoreProjectOnLoad.value = false
+  if (selectedGroupKey.value) return
   const stored = loadSelectedGroupFromStorage()
   if (!stored) return
   const match = groups.find((group) => group.key === stored)
@@ -2564,6 +2609,9 @@ function applySettingsPatch(patch: Partial<Settings>) {
   if (typeof patch.hostnames === 'boolean') {
     settings.hostnames = patch.hostnames
   }
+  if (typeof patch.onboarded === 'boolean') {
+    settings.onboarded = patch.onboarded
+  }
   if (typeof patch.proxy_port === 'number' && Number.isFinite(patch.proxy_port)) {
     settings.proxy_port = Math.min(Math.max(Math.floor(patch.proxy_port), 1024), 65535)
   }
@@ -2593,6 +2641,7 @@ function normalizeDraftSettings(draft: Settings) {
     auto_restart: !!draft.auto_restart,
     hostnames: !!draft.hostnames,
     proxy_port: Math.min(Math.max(Math.floor(draft.proxy_port ?? settings.proxy_port), 1024), 65535),
+    onboarded: settings.onboarded,
     startup_timeout_ms: Math.min(Math.max(Math.floor(draft.startup_timeout_ms ?? settings.startup_timeout_ms), 10000), 30000),
     port_base: Math.min(Math.max(Math.floor(draft.port_base ?? settings.port_base), 1), 65535),
     scan_depth: Math.min(Math.max(Math.floor(draft.scan_depth ?? settings.scan_depth), 1), 64),
@@ -2768,6 +2817,21 @@ watch(activeSection, async (section) => {
 // The native browser view always paints above the page, so it is hidden while
 // any modal or menu is open instead of covering it.
 const paletteOpen = ref(false)
+const onboardingOpen = ref(false)
+const onboardingRef = ref<InstanceType<typeof Onboarding> | null>(null)
+
+async function finishOnboarding() {
+  onboardingOpen.value = false
+  activeSection.value = 'home'
+  applySettingsPatch({ onboarded: true })
+  saveSettingsToStorage()
+  await apiFetch('/api/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ onboarded: true })
+  }).catch(() => null)
+  await loadProjects()
+}
 
 async function showLogs(search?: string) {
   const group = selectedGroup.value ?? folderGroups.value[0]
@@ -2805,12 +2869,13 @@ const paletteCommands = computed<PaletteCommand[]>(() => {
   })
   for (const group of folderGroups.value) {
     const running = groupHasRunning(group)
+    const launching = groupActionLoading[group.key] === 'launch'
     commands.push({
       id: `group:${group.key}`,
       group: 'Projects',
-      title: running ? `Stop ${group.name}` : `Launch ${group.name}`,
-      subtitle: running ? 'Stop every service of the project' : 'Start every service, backends first',
-      run: () => running ? stopGroup(group) : launchGroup(group)
+      title: launching ? `Cancel launching ${group.name}` : running ? `Stop ${group.name}` : `Launch ${group.name}`,
+      subtitle: launching ? 'Stop the services this launch started' : running ? 'Stop every service of the project' : 'Start every service, backends first',
+      run: () => launching ? cancelGroupLaunch(group) : running ? stopGroup(group) : launchGroup(group)
     })
   }
   for (const group of folderGroups.value) {
@@ -2839,6 +2904,7 @@ const paletteCommands = computed<PaletteCommand[]>(() => {
     { id: 'logs', group: 'App', title: 'Search logs', shortcut: '⌘F', run: () => showLogs() },
     { id: 'add', group: 'App', title: 'Add projects…', shortcut: '⌘O', run: () => openPicker() },
     { id: 'home', group: 'App', title: 'Go home', run: () => goHome() },
+    { id: 'welcome', group: 'App', title: 'Show the welcome tour', keywords: 'onboarding intro help', run: () => { onboardingOpen.value = true } },
     { id: 'settings', group: 'App', title: 'Open settings', shortcut: '⌘,', run: () => { activeSection.value = 'settings' } },
     {
       id: 'theme',
@@ -2853,7 +2919,7 @@ const paletteCommands = computed<PaletteCommand[]>(() => {
 
 // App-wide shortcuts; the ones that act on "the project" use the selected one.
 function handleShortcut(event: KeyboardEvent) {
-  if (!(event.metaKey || event.ctrlKey) || event.altKey) return false
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || onboardingOpen.value) return false
   const key = event.key.toLowerCase()
   if (key === 'k') {
     paletteOpen.value = !paletteOpen.value
@@ -2889,6 +2955,22 @@ function handleShortcut(event: KeyboardEvent) {
   return false
 }
 
+// Home: services running or starting anywhere, newest projects first.
+const liveServices = computed(() => homeProjectGroups.value.flatMap((group) =>
+  group.items.filter((item) => item.status.running || isStarting(item))
+))
+
+function serviceDisplayName(service: ProjectView) {
+  const project = folderLabel(projectRootPath(service))
+  const name = projectTitle(service)
+  return project === name ? name : `${project} / ${name}`
+}
+
+function openServiceProject(service: ProjectView) {
+  const group = folderGroups.value.find((entry) => entry.items.some((item) => item.project.id === service.project.id))
+  if (group) openDetails(group)
+}
+
 // The service whose environment and links are being edited.
 const configServiceId = ref<string | null>(null)
 const configService = computed(() => projects.value.find((item) => item.project.id === configServiceId.value) ?? null)
@@ -2911,6 +2993,7 @@ function environmentSummary(service: ProjectView) {
 }
 
 const overlayOpen = computed(() =>
+  onboardingOpen.value ||
   paletteOpen.value ||
   !!configServiceId.value ||
   pickerOpen.value ||
@@ -3026,6 +3109,8 @@ onMounted(async () => {
   await fetchSettings()
   await checkHealth()
   await loadProjects({ showLoading: true })
+  // A new user (nothing saved yet) starts with the welcome.
+  if (settingsLoaded.value && !settings.onboarded && !projects.value.length) onboardingOpen.value = true
   loadRecentProjectsFromStorage()
   if (activePortsExpanded.value) {
     await fetchUsedPorts()
@@ -3269,124 +3354,136 @@ onBeforeUnmount(() => {
         <div class="flex-1 min-h-0 overflow-hidden p-3">
           <div v-if="activeSection === 'home'" class="h-full min-h-0">
             <div class="h-full min-h-0 overflow-y-auto rounded-2xl" :class="[panelProjectClass, noScrollbar]">
-              <div class="mx-auto grid min-h-full w-full max-w-[1380px] xl:grid-cols-[minmax(0,1.08fr)_minmax(390px,0.92fr)]">
-                <section class="flex min-h-[470px] flex-col justify-center border-b border-[var(--border)] px-8 py-12 sm:px-12 xl:border-b-0 xl:border-r xl:px-16 xl:py-16">
-                  <div class="max-w-2xl">
-                    <h1 class="max-w-xl text-[clamp(2.35rem,4vw,3.7rem)] font-semibold leading-[1.03] tracking-[-0.055em] text-[var(--text-strong)]">
-                      Run local projects without the port shuffle.
-                    </h1>
-                    <p class="mt-5 max-w-xl text-base leading-7 text-[var(--text-muted)]">
-                      Choose a project folder once. multiprise finds its services, assigns free ports, and keeps every process within reach.
-                    </p>
+              <div class="mx-auto w-full max-w-[1100px] px-8 py-8 sm:px-10">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                  <h1 class="text-2xl font-semibold tracking-[-0.03em] text-[var(--text-strong)]">Projects</h1>
+                  <div class="flex items-center gap-2">
                     <button
-                      class="mt-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel-project)]"
-                      :class="[btnPanelPrimaryLg, 'min-w-[156px]']"
-                      @click="openPicker"
+                      type="button"
+                      class="hidden h-9 items-center gap-2 rounded-lg border border-[var(--border)] px-3 text-xs text-[var(--text-subtle)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text)] sm:inline-flex"
+                      @click="paletteOpen = true"
                     >
+                      Search or run a command
+                      <kbd class="rounded border border-[var(--border)] px-1.5 py-0.5 font-sans text-[10px]">⌘K</kbd>
+                    </button>
+                    <button :class="btnPanelPrimary" class="h-9" @click="openPicker">
                       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
                         <path d="M12 5v14M5 12h14" stroke-linecap="round" />
                       </svg>
-                      Add project
+                      Add projects
                     </button>
                   </div>
+                </div>
 
-                  <svg
-                    viewBox="0 0 620 150"
-                    class="mt-14 h-auto w-full max-w-[620px] text-[var(--border)]"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <path d="M4 77H120" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path d="M500 77H616" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                    <path class="animate-current-flow" d="M4 77H120" stroke="var(--electric)" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 16" />
-                    <rect x="120" y="25" width="380" height="104" rx="30" fill="var(--panel-bg)" stroke="currentColor" stroke-width="2" />
-                    <g v-for="x in [176, 266, 356, 446]" :key="x" transform="translate(0 1)">
-                      <circle :cx="x" cy="76" r="29" fill="var(--panel-muted)" stroke="currentColor" stroke-width="2" />
-                      <rect :x="x - 10" y="62" width="5" height="14" rx="2.5" fill="var(--text-subtle)" />
-                      <rect :x="x + 5" y="62" width="5" height="14" rx="2.5" fill="var(--text-subtle)" />
-                      <circle :cx="x" cy="87" r="4" fill="var(--text-subtle)" />
-                    </g>
-                    <circle cx="484" cy="42" r="5" fill="var(--electric)" />
-                  </svg>
-                </section>
+                <p v-if="error" class="mt-4 text-sm text-[var(--warning-text)]" role="alert">{{ error }}</p>
 
-                <section class="flex min-h-[470px] flex-col px-8 py-10 sm:px-12 xl:px-12 xl:py-14">
-                  <div>
-                    <h2 class="text-xl font-semibold tracking-[-0.025em] text-[var(--text-strong)]">
-                      {{ homeProjectGroups.length ? 'Open a project' : 'Your projects' }}
-                    </h2>
-                    <p class="mt-1 text-sm text-[var(--text-muted)]">
-                      {{ folderGroups.length ? folderGroups.length + ' tracked on this machine' : 'Nothing tracked on this machine yet' }}
-                    </p>
-                  </div>
+                <div v-if="loading" class="flex min-h-44 items-center justify-center" role="status" aria-label="Loading projects">
+                  <span :class="spinnerClass" aria-hidden="true"></span>
+                </div>
 
-                  <div v-if="loading" class="flex min-h-44 items-center justify-center" role="status" aria-label="Loading projects">
-                    <span :class="spinnerClass" aria-hidden="true"></span>
-                  </div>
-
-                  <div v-else-if="homeProjectGroups.length" class="mt-7 border-t border-[var(--border)]">
-                    <button
-                      v-for="group in homeProjectGroups"
-                      :key="group.key"
-                      type="button"
-                      class="group flex w-full items-center gap-4 border-b border-[var(--border)] px-1 py-4 text-left transition-colors duration-150 hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--primary)]"
-                      @click="handleGroupClick(group)"
-                    >
-                      <span
-                        :class="[statusDot, groupReadyCount(group) ? statusDotLive : '']"
-                        :aria-label="groupReadyCount(group) ? groupReadyCount(group) + ' services live' : 'Idle'"
-                      ></span>
-                      <span class="min-w-0 flex-1">
-                        <span class="block truncate text-[15px] font-semibold text-[var(--text-strong)]">{{ group.name }}</span>
-                        <span class="mt-0.5 block truncate text-xs text-[var(--text-subtle)]">{{ group.path }}</span>
-                      </span>
-                      <span class="shrink-0 text-right text-xs text-[var(--text-muted)]">
-                        <span v-if="groupReadyCount(group)" class="block font-medium text-[var(--electric)]">
-                          {{ groupReadyCount(group) }} live
-                        </span>
-                        <span v-else class="block">{{ groupServiceCount(group) }} service{{ groupServiceCount(group) === 1 ? '' : 's' }}</span>
-                      </span>
-                      <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-[var(--text-subtle)] transition-transform duration-150 group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                        <path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
-                      </svg>
-                    </button>
-                  </div>
-
-                  <div v-else-if="!recentImportable.length" class="flex flex-1 flex-col justify-center py-12">
-                    <p class="max-w-sm text-lg font-medium text-[var(--text-strong)]">Choose a parent folder to begin.</p>
-                    <p class="mt-2 max-w-sm text-sm leading-6 text-[var(--text-muted)]">
-                      Services stay grouped under the folder you select, so one project remains one project.
-                    </p>
-                  </div>
-
-                  <div v-if="recentImportable.length" class="mt-auto pt-10">
-                    <div class="flex items-center justify-between gap-4">
-                      <h2 class="text-sm font-semibold text-[var(--text-strong)]">
-                        {{ homeProjectGroups.length ? 'Not tracked yet' : 'Recently found' }}
-                      </h2>
-                      <span class="text-xs text-[var(--text-subtle)]">Add in one click</span>
+                <template v-else>
+                  <section v-if="liveServices.length" class="mt-7">
+                    <h2 class="text-xs font-semibold uppercase tracking-wide text-[var(--text-subtle)]">Running now · {{ liveServices.length }}</h2>
+                    <div class="mt-2 divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--panel-bg)]">
+                      <div v-for="service in liveServices" :key="service.project.id" class="flex items-center gap-3 px-4 py-2.5">
+                        <span :class="[statusDot, serviceReady(service) ? statusDotLive : serviceFailed(service) ? statusDotFailed : '']"></span>
+                        <button type="button" class="min-w-0 flex-1 text-left" @click="openServiceProject(service)">
+                          <span class="block truncate text-sm font-medium text-[var(--text-strong)]">{{ serviceDisplayName(service) }}</span>
+                          <span class="block truncate text-[11px] text-[var(--text-subtle)]">{{ serviceStatusLabel(service) }}</span>
+                        </button>
+                        <button
+                          v-if="projectUrl(service) && serviceReady(service)"
+                          type="button"
+                          class="hidden truncate font-mono text-xs text-[var(--text-muted)] hover:text-[var(--text-strong)] md:block"
+                          title="Open in the browser"
+                          @click="openProjectUrl(service)"
+                        >{{ projectUrl(service) }}</button>
+                        <button
+                          v-if="projectUrl(service) && serviceReady(service)"
+                          :class="btnPanelSecondary"
+                          class="!h-7 !px-2.5 !text-xs"
+                          @click="openInAppBrowser(service)"
+                        >Open</button>
+                        <button
+                          :class="btnPanelSecondary"
+                          class="!h-7 !px-2.5 !text-xs"
+                          :disabled="isActionLoading('stop', service.project.id)"
+                          @click="isStarting(service) ? cancelStart(service) : stopProject(service)"
+                        >{{ isStarting(service) ? 'Cancel' : 'Stop' }}</button>
+                      </div>
                     </div>
-                    <div class="mt-3 border-t border-[var(--border)]">
+                  </section>
+
+                  <section v-if="homeProjectGroups.length" class="mt-7">
+                    <h2 class="text-xs font-semibold uppercase tracking-wide text-[var(--text-subtle)]">All projects · {{ homeProjectGroups.length }}</h2>
+                    <div class="mt-2 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      <div
+                        v-for="group in homeProjectGroups"
+                        :key="group.key"
+                        class="group flex flex-col rounded-xl border border-[var(--border)] bg-[var(--panel-bg)] p-4 transition-colors hover:border-[var(--text-subtle)]"
+                      >
+                        <button type="button" class="flex min-w-0 items-center gap-3 text-left" @click="handleGroupClick(group)">
+                          <span
+                            class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--panel-muted)] text-xs font-semibold text-[var(--text-muted)]"
+                          >
+                            <img
+                              v-if="groupFaviconUrl(group)"
+                              :src="groupFaviconUrl(group)"
+                              class="h-full w-full object-cover"
+                              alt=""
+                              @error="handleFaviconError(groupFaviconId(group))"
+                            />
+                            <span v-else>{{ groupInitials(group) }}</span>
+                          </span>
+                          <span class="min-w-0 flex-1">
+                            <span class="block truncate text-[15px] font-semibold text-[var(--text-strong)]">{{ group.name }}</span>
+                            <span class="block truncate text-[11px] text-[var(--text-subtle)]">{{ group.path }}</span>
+                          </span>
+                        </button>
+                        <div class="mt-4 flex items-center justify-between gap-3">
+                          <span class="text-xs" :class="groupReadyCount(group) ? 'font-medium text-[var(--electric)]' : 'text-[var(--text-muted)]'">
+                            {{ groupReadyCount(group) ? `${groupReadyCount(group)} of ${groupServiceCount(group)} running` : `${groupServiceCount(group)} service${groupServiceCount(group) === 1 ? '' : 's'}` }}
+                          </span>
+                          <button
+                            v-if="groupHasNpmServices(group)"
+                            :class="groupHasRunning(group) || groupActionLoading[group.key] === 'launch' ? btnUnplug : btnPanelPrimary"
+                            class="!h-7 !px-3 !text-xs"
+                            :disabled="groupActionLoading[group.key] === 'stop' || groupActionLoading[group.key] === 'delete' || (groupActionLoading[group.key] === 'launch' && !!groupLaunchCancelled[group.key])"
+                            @click="groupActionLoading[group.key] === 'launch' ? cancelGroupLaunch(group) : groupHasRunning(group) ? stopGroup(group) : launchGroup(group)"
+                          >
+                            <span v-if="groupActionLoading[group.key]" :class="[spinnerClass, '!h-3 !w-3']" aria-hidden="true"></span>
+                            {{ groupActionLoading[group.key] === 'launch' ? 'Cancel' : groupActionLoading[group.key] === 'stop' ? 'Stopping…' : groupHasRunning(group) ? 'Stop' : 'Launch' }}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section v-else class="mt-16 flex flex-col items-center text-center">
+                    <p class="text-lg font-medium text-[var(--text-strong)]">No projects yet</p>
+                    <p class="mt-1 text-sm text-[var(--text-muted)]">Add a folder, or drop one anywhere on this window.</p>
+                    <button :class="btnPanelPrimary" class="mt-5 h-9" @click="openPicker">Add projects</button>
+                  </section>
+
+                  <section v-if="recentImportable.length" class="mt-9">
+                    <h2 class="text-xs font-semibold uppercase tracking-wide text-[var(--text-subtle)]">Found on this Mac</h2>
+                    <div class="mt-2 flex flex-wrap gap-2">
                       <button
                         v-for="project in recentImportable"
                         :key="project.path"
                         type="button"
-                        class="flex w-full items-center gap-3 border-b border-[var(--border)] px-1 py-3 text-left transition-colors duration-150 hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--primary)] disabled:cursor-wait disabled:opacity-60"
+                        class="inline-flex max-w-[260px] items-center gap-2 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-left text-xs transition-colors hover:border-[var(--text-subtle)] hover:bg-[var(--hover)] disabled:cursor-wait disabled:opacity-60"
+                        :title="project.path"
                         :disabled="importLoading[project.path]"
                         @click="importRecentProject(project)"
                       >
-                        <span class="min-w-0 flex-1">
-                          <span class="block truncate text-sm font-medium text-[var(--text-strong)]">{{ project.name }}</span>
-                          <span class="mt-0.5 block truncate text-[11px] text-[var(--text-subtle)]">{{ project.path }}</span>
-                        </span>
-                        <span v-if="importLoading[project.path]" :class="spinnerClass" aria-hidden="true"></span>
-                        <span v-else class="shrink-0 text-xs font-semibold text-[var(--text-muted)]">Add</span>
+                        <span v-if="importLoading[project.path]" :class="[spinnerClass, '!h-3 !w-3']" aria-hidden="true"></span>
+                        <span v-else class="text-[var(--text-subtle)]">+</span>
+                        <span class="truncate font-medium text-[var(--text)]">{{ project.name }}</span>
                       </button>
                     </div>
-                  </div>
-
-                  <p v-if="error" class="mt-4 text-sm text-[var(--warning-text)]" role="alert">{{ error }}</p>
-                </section>
+                  </section>
+                </template>
               </div>
             </div>
           </div>
@@ -3452,9 +3549,10 @@ onBeforeUnmount(() => {
                       {{ groupReadyCount(selectedGroup) }}/{{ groupServiceCount(selectedGroup) }} ready
                     </span>
                     <button
-                      :class="groupHasRunning(selectedGroup) ? btnUnplugLg : btnPanelPrimaryLg"
-                      :disabled="!groupHasNpmServices(selectedGroup) || !!groupActionLoading[selectedGroup.key]"
-                      @click="groupHasRunning(selectedGroup) ? stopGroup(selectedGroup) : launchGroup(selectedGroup)"
+                      :class="groupHasRunning(selectedGroup) || groupActionLoading[selectedGroup.key] === 'launch' ? btnUnplugLg : btnPanelPrimaryLg"
+                      :disabled="!groupHasNpmServices(selectedGroup) || (!!groupActionLoading[selectedGroup.key] && groupActionLoading[selectedGroup.key] !== 'launch') || !!groupLaunchCancelled[selectedGroup.key] && groupActionLoading[selectedGroup.key] === 'launch'"
+                      :title="groupActionLoading[selectedGroup.key] === 'launch' ? 'Stop this launch' : undefined"
+                      @click="groupActionLoading[selectedGroup.key] === 'launch' ? cancelGroupLaunch(selectedGroup) : groupHasRunning(selectedGroup) ? stopGroup(selectedGroup) : launchGroup(selectedGroup)"
                     >
                       <span v-if="groupActionLoading[selectedGroup.key]" :class="spinnerClass" aria-hidden="true"></span>
                       <svg v-else-if="!groupHasRunning(selectedGroup)" viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -3462,7 +3560,7 @@ onBeforeUnmount(() => {
                       </svg>
                       {{
                         groupActionLoading[selectedGroup.key] === 'launch'
-                          ? 'Launching…'
+                          ? groupLaunchCancelled[selectedGroup.key] ? 'Cancelling…' : 'Cancel launch'
                           : groupActionLoading[selectedGroup.key] === 'stop'
                           ? 'Unplugging…'
                           : groupHasRunning(selectedGroup)
@@ -3539,11 +3637,12 @@ onBeforeUnmount(() => {
                                 <div class="flex items-center gap-2">
                                   <button
                                     :class="btnPanelSecondary"
-                                    :disabled="isActionLoading('start', service.project.id)"
-                                    @click="toggleService(service)"
+                                    :disabled="isActionLoading('stop', service.project.id)"
+                                    :title="isStarting(service) ? 'Stop starting this service' : undefined"
+                                    @click="isStarting(service) ? cancelStart(service) : toggleService(service)"
                                   >
-                                    <span v-if="isActionLoading('start', service.project.id)" :class="spinnerClass" aria-hidden="true"></span>
-                                    {{ isActionLoading('start', service.project.id) ? 'Starting…' : 'Start' }}
+                                    <span v-if="isStarting(service)" :class="spinnerClass" aria-hidden="true"></span>
+                                    {{ isStarting(service) ? 'Cancel' : 'Start' }}
                                   </button>
                                   <button
                                     :class="btnPanelIcon"
@@ -3743,8 +3842,9 @@ onBeforeUnmount(() => {
                                 <div v-else class="flex justify-end">
                                   <button
                                     :class="service.status.running ? btnUnplug : btnPanelSecondary"
-                                    :disabled="serviceStarting(service) || isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)"
-                                    @click="toggleService(service)"
+                                    :disabled="isActionLoading('stop', service.project.id)"
+                                    :title="isStarting(service) ? 'Stop starting this service' : undefined"
+                                    @click="isStarting(service) ? cancelStart(service) : toggleService(service)"
                                   >
                                     <span
                                       v-if="isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)"
@@ -3752,12 +3852,10 @@ onBeforeUnmount(() => {
                                       aria-hidden="true"
                                     ></span>
                                     {{
-                                      serviceStarting(service)
-                                        ? 'Starting…'
-                                        : isActionLoading(service.status.running ? 'stop' : 'start', service.project.id)
-                                        ? service.status.running
-                                          ? 'Unplugging…'
-                                          : 'Starting…'
+                                      isStarting(service)
+                                        ? 'Cancel'
+                                        : isActionLoading('stop', service.project.id)
+                                        ? 'Unplugging…'
                                         : service.status.running
                                         ? 'Unplug'
                                         : 'Start'
@@ -4344,16 +4442,18 @@ onBeforeUnmount(() => {
         <div class="mt-2 space-y-1 p-2">
           <button
             class="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--hover)]"
-            :disabled="!groupHasNpmServices(groupMenuGroup) || !!groupActionLoading[groupMenuGroup.key]"
+            :disabled="!groupHasNpmServices(groupMenuGroup) || groupActionLoading[groupMenuGroup.key] === 'stop' || groupActionLoading[groupMenuGroup.key] === 'delete'"
             @click="
-              groupHasRunning(groupMenuGroup) ? stopGroup(groupMenuGroup) : launchGroup(groupMenuGroup);
+              groupActionLoading[groupMenuGroup.key] === 'launch'
+                ? cancelGroupLaunch(groupMenuGroup)
+                : groupHasRunning(groupMenuGroup) ? stopGroup(groupMenuGroup) : launchGroup(groupMenuGroup);
               closeGroupMenu();
             "
           >
             <span>
               {{
                 groupActionLoading[groupMenuGroup.key] === 'launch'
-                  ? 'Launching…'
+                  ? 'Cancel launch'
                   : groupActionLoading[groupMenuGroup.key] === 'stop'
                   ? 'Unplugging…'
                   : groupHasRunning(groupMenuGroup)
@@ -4374,6 +4474,14 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </transition>
+
+    <Onboarding
+      v-if="onboardingOpen"
+      ref="onboardingRef"
+      :api="apiFetch"
+      @projects-added="loadProjects()"
+      @done="finishOnboarding"
+    />
 
     <div
       v-if="draggingFiles"

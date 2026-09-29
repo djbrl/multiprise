@@ -55,6 +55,7 @@
       "main.cjs",
       "menu-bar.cjs",
       "cli-install.cjs",
+      "splash.cjs",
       "preload.cjs",
       "shell-path.cjs",
       "package.json",
