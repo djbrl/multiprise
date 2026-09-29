@@ -308,7 +308,7 @@ test('startup reconciliation replaces removed nested services with the current r
 test('an edited command wins while auto commands continue following detection', async () => {
   const root = await temporaryDirectory('multiprise-command-owner')
   await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { dev: 'vite', start: 'node dist/main.js' } }))
-  const { resolveStartCommand } = require('../dist/server.js')
+  const { resolveStartCommand } = require('../dist/launch.js')
   const base = {
     id: 'command-owner', name: 'command-owner', path: root, root_path: root, tags: [], command: 'npm run dev',
     command_source: 'auto', framework: 'vite', kind: 'command', role: 'frontend', created_at: new Date().toISOString()
