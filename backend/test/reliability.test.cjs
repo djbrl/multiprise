@@ -383,6 +383,8 @@ test('the API rejects requests without the launch token, from foreign origins, o
   assert.equal(preflight.status, 204)
   assert.equal(preflight.headers['access-control-allow-origin'], 'null')
   assert.match(preflight.headers['access-control-allow-headers'], /x-multiprise-token/)
+  // The renderer uses every method the API has; a missing one fails its preflight.
+  assert.deepEqual(preflight.headers['access-control-allow-methods'].split(','), ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
 
   const formPost = await api.call('/api/projects/any/start', {
     method: 'POST',

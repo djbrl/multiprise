@@ -87,7 +87,7 @@ const TOOLS: Tool[] = [
     name: 'start_service',
     description: 'Start a service, or every service of a project, and wait until it accepts connections. ' +
       'Multiprise assigns a free port, keeps the previous one when possible, and wires BACKEND_PORT/FRONTEND_PORT between siblings. ' +
-      'Services that are already running are left alone. Returns each service\'s URL.',
+      'Services it depends on start first, and services that are already running are left alone. Returns each service\'s URL.',
     inputSchema: { type: 'object', properties: { service: serviceArgument }, required: ['service'] },
     run: async (client, args) => summarizeResults(await startTargets(client, [await target(client, args.service)]))
   },

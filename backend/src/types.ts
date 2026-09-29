@@ -28,6 +28,12 @@ export type Project = {
   last_exit_at?: string | null
   last_error?: string | null
   created_at: string
+  // Variables set for this service; values may reference other services ({{services.api.url}}).
+  env?: Record<string, string>
+  // Names of variables whose values are kept encrypted outside projects.json.
+  secret_env?: string[]
+  // Ids of services this one depends on: they start first and can be referenced in env.
+  links?: string[]
 }
 
 // One container of a Docker Compose service, from `docker compose ps`.
@@ -177,6 +183,7 @@ export type AllocatePortsPayload = {
 }
 
 export type UpdateProjectPayload = {
+  links?: string[]
   name?: string
   command?: string | null
   command_source?: CommandSource

@@ -265,6 +265,10 @@ export type HostnameController = {
   close: () => Promise<void>
 }
 
+// The port the running proxy serves, for {{services.x.host_url}} in service environments.
+let activePort: number | null = null
+export const activeHostnamePort = () => activePort
+
 export function createHostnameController(state: AppState, override?: number | false): HostnameController {
   let proxy: HostnameProxy | null = null
   let applied: number | false | undefined
@@ -279,10 +283,12 @@ export function createHostnameController(state: AppState, override?: number | fa
       proxy = null
       controller.port = null
       controller.error = null
+      activePort = null
       if (wanted === false) return
       try {
         proxy = await startHostnameProxy(state, wanted)
         controller.port = proxy.port
+        activePort = proxy.port
       } catch (err) {
         // Services still work on their own ports; only the stable names are unavailable.
         controller.error = `Port ${wanted} is not available for service hostnames (${err instanceof Error ? err.message : String(err)}). Choose another port in Settings.`
@@ -294,6 +300,7 @@ export function createHostnameController(state: AppState, override?: number | fa
       await proxy?.close()
       proxy = null
       controller.port = null
+      activePort = null
     }
   }
   return controller

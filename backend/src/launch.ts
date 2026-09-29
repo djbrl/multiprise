@@ -23,6 +23,7 @@ import { projectRoleFallback } from './roles'
 import { resolveProjectNodeRuntime } from './runtime'
 import { spawnCommand } from './commands'
 import { dockerStatus, followDockerLogsFrom, refreshDockerProject } from './docker'
+import { envFileStatus, serviceEnvironment } from './environment'
 import { HttpError, isValidPort } from './http'
 
 export const DEFAULT_DOCKER_STOP = 'docker compose down'
@@ -135,8 +136,9 @@ export async function launchService(
   // A restart keeps the crashed run's output on screen instead of starting a fresh log.
   options: { keepLogs?: boolean } = {}
 ): Promise<ProjectView> {
+  // Already up (a dependency start may have got there first): nothing to do.
   if (project.kind !== 'docker_compose' && getProcessPid(project.id)) {
-    throw new HttpError(400, 'Project already running')
+    return buildProjectView(project)
   }
 
   if (payload.role !== undefined && !SERVICE_ROLES.has(payload.role)) {
@@ -200,12 +202,16 @@ export async function launchService(
     try {
       const { command, commandSource, cwd, detection } = await resolveStartCommand(project, payload)
       const framework = detection.framework ?? project.framework ?? 'unknown'
-      const startEnv = await buildStartEnv({
+      const defaults = await buildStartEnv({
         payloadEnv: payload.env,
         role,
         framework,
         port
       })
+      // The service's own variables win over the defaults, except the port it was given.
+      const startEnv = { ...defaults, ...await serviceEnvironment(state, project) }
+      if (defaults.PORT) startEnv.PORT = defaults.PORT
+      await warnAboutEnvFiles(project)
       const runtime = await resolveProjectNodeRuntime({
         command,
         cwd,
@@ -289,6 +295,104 @@ export async function launchService(
   } finally {
     if (launches.get(project.id) === launch) launches.delete(project.id)
   }
+}
+
+async function warnAboutEnvFiles(project: Project) {
+  const status = await envFileStatus(project)
+  if (!status.example || !status.missing.length) return
+  const names = status.missing.slice(0, 8).join(', ') + (status.missing.length > 8 ? ', …' : '')
+  appendProcessLog(project.id, 'stderr', status.has_env
+    ? `[multiprise] ${status.example} lists variables that are not set: ${names}.`
+    : `[multiprise] ${status.example} exists but there is no .env, so these are not set: ${names}. Add them to the service's environment in Multiprise, or create .env.`)
+}
+
+// Rejects links to unknown services, to the service itself, or that would form a cycle.
+export function validateLinks(state: AppState, project: Project, links: unknown): string[] {
+  if (!Array.isArray(links) || links.some((id) => typeof id !== 'string')) throw new HttpError(400, 'links must be a list of service ids')
+  const unique = [...new Set(links as string[])]
+  for (const id of unique) {
+    if (id === project.id) throw new HttpError(400, 'A service cannot depend on itself')
+    if (!state.projects.some((entry) => entry.id === id)) throw new HttpError(400, `No service with id ${id}`)
+  }
+  const linksOf = (entry: Project) => entry.id === project.id ? unique : entry.links ?? []
+  const visiting = new Set<string>()
+  const visit = (id: string, trail: string[]): void => {
+    if (id === project.id && trail.length) {
+      const names = [...trail, id].map((entry) => state.projects.find((item) => item.id === entry)?.name ?? entry)
+      throw new HttpError(400, `That would make a loop: ${names.join(' → ')}`)
+    }
+    if (visiting.has(id)) return
+    visiting.add(id)
+    const entry = state.projects.find((item) => item.id === id)
+    for (const next of entry ? linksOf(entry) : []) visit(next, [...trail, id])
+  }
+  for (const id of unique) visit(id, [project.id])
+  return unique
+}
+
+// Every service the given one depends on, directly or not, dependencies first.
+export function dependencyOrder(state: AppState, project: Project): Project[] {
+  const ordered: Project[] = []
+  const seen = new Set<string>([project.id])
+  const visit = (entry: Project) => {
+    for (const id of entry.links ?? []) {
+      const dependency = state.projects.find((item) => item.id === id)
+      if (!dependency || seen.has(id)) continue
+      seen.add(id)
+      visit(dependency)
+      ordered.push(dependency)
+    }
+  }
+  visit(project)
+  return ordered
+}
+
+const isUp = (project: Project) =>
+  project.kind === 'docker_compose' ? !!project.docker_running : getProcessStatus(project.id).running
+
+// BACKEND_PORT/FRONTEND_PORT as the app's Launch button passes them, from the project's
+// primary backend and frontend, for starts that do not come from that button.
+export function siblingPortEnv(state: AppState, project: Project): Record<string, string> {
+  const root = project.root_path ?? project.path
+  const siblings = state.projects.filter((entry) => (entry.root_path ?? entry.path) === root && entry.kind !== 'docker_compose')
+  const portOf = (role: string) => siblings.find((entry) => projectRoleFallback(entry) === role)?.port
+  const env: Record<string, string> = {}
+  const backendPort = portOf('backend')
+  const frontendPort = portOf('frontend')
+  if (backendPort) env.BACKEND_PORT = String(backendPort)
+  if (frontendPort) env.FRONTEND_PORT = String(frontendPort)
+  return env
+}
+
+// Starts stopped dependencies first (each with the settings it last started with), then the service.
+export async function launchWithDependencies(state: AppState, launches: Launches, project: Project, payload: StartProjectPayload) {
+  const dependencies = dependencyOrder(state, project)
+  // Reserve the service's port first, so dependencies starting now are told the right one.
+  if (dependencies.some((dependency) => !isUp(dependency)) && payload.port === undefined &&
+    project.kind !== 'docker_compose' && state.settings.auto_port && !isUp(project)) {
+    const listening = await listListeningPorts()
+    const used = new Set<number>(listening.map((entry) => entry.port))
+    state.projects.forEach((entry) => { if (entry.port && entry.id !== project.id) used.add(entry.port) })
+    const port = await previousPortIfFree(project, state, listening) ??
+      await pickAvailablePort({ role: payload.role ?? projectRoleFallback(project), used, preferredBase: state.settings.port_base })
+    if (port) {
+      payload = { ...payload, port }
+      project.port = port
+    }
+  }
+  for (const dependency of dependencies) {
+    // Someone else is starting it: wait for that launch instead of racing it.
+    const deadline = Date.now() + Math.max(state.settings.startup_timeout_ms, 30000)
+    while (launches.has(dependency.id) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 150))
+    if (isUp(dependency)) continue
+    try {
+      await launchService(state, launches, dependency, lastLaunchPayload(dependency.id) ?? { env: siblingPortEnv(state, dependency) })
+    } catch (err) {
+      const status = err instanceof HttpError ? err.status : 400
+      throw new HttpError(status, `${dependency.name}, which ${project.name} depends on, could not start: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return launchService(state, launches, project, payload)
 }
 
 export async function stopService(state: AppState, launches: Launches, project: Project): Promise<ProjectView> {

@@ -16,7 +16,8 @@ import { deleteLogFiles } from '../logfiles'
 import { forgetDockerProject } from '../docker'
 import { openInFileManager, openInVSCode } from '../commands'
 import { findProjectIcon, resolveProjectIcon } from '../icons'
-import { buildProjectView, cancelLaunch } from '../launch'
+import { buildProjectView, cancelLaunch, validateLinks } from '../launch'
+import { describeEnvironment, envFileStatus, saveEnvironment, secrets } from '../environment'
 import { cleanPath, handle, isSameOrInside, isValidPort, stringArray } from '../http'
 import { type ApiContext } from './context'
 
@@ -185,6 +186,7 @@ export function registerProjectRoutes(app: Express, { state, launches }: ApiCont
     if (payload.port !== undefined && payload.port !== null && !isValidPort(payload.port)) {
       return res.status(400).send('Port must be an integer between 1 and 65535')
     }
+    const links = payload.links !== undefined ? validateLinks(state, project, payload.links) : undefined
 
     if (payload.name !== undefined) {
       project.name = payload.name.trim()
@@ -208,6 +210,9 @@ export function registerProjectRoutes(app: Express, { state, launches }: ApiCont
     if (payload.port !== undefined) {
       project.port = payload.port
     }
+    if (links !== undefined) {
+      project.links = links
+    }
 
     await persistProjects(state)
     return res.json(buildProjectView(project))
@@ -223,11 +228,34 @@ export function registerProjectRoutes(app: Express, { state, launches }: ApiCont
     cancelLaunch(launches, id)
     await stopProcess(id)
     state.projects = state.projects.filter((entry) => entry.id !== id)
+    for (const entry of state.projects) {
+      if (entry.links?.includes(id)) entry.links = entry.links.filter((link) => link !== id)
+    }
+    await secrets().remove(id).catch(() => {})
     await persistProjects(state)
     forgetLogs(id)
     forgetDockerProject(id)
     deleteLogFiles(id)
     res.json({ ok: true })
+  }))
+
+  // Variables (secret values are never returned), links, and what the folder's env files say.
+  app.get('/api/projects/:id/environment', handle(async (req: Request, res: Response) => {
+    const project = state.projects.find((entry) => entry.id === req.params.id)
+    if (!project) {
+      return res.status(404).send('Project not found')
+    }
+    res.json({ variables: describeEnvironment(project), links: project.links ?? [], env_file: await envFileStatus(project) })
+  }))
+
+  app.put('/api/projects/:id/environment', handle(async (req: Request, res: Response) => {
+    const project = state.projects.find((entry) => entry.id === req.params.id)
+    if (!project) {
+      return res.status(404).send('Project not found')
+    }
+    await saveEnvironment(project, req.body?.variables)
+    await persistProjects(state)
+    res.json({ variables: describeEnvironment(project), links: project.links ?? [], env_file: await envFileStatus(project) })
   }))
 
   app.post('/api/projects/:id/detect', handle(async (req: Request, res: Response) => {

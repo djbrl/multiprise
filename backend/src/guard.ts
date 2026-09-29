@@ -32,7 +32,7 @@ export function apiGuard(security: ApiSecurityOptions): RequestHandler {
       if (!allowedOrigins.has(origin)) return res.status(403).send('Forbidden origin')
       res.header('Access-Control-Allow-Origin', origin)
       res.header('Vary', 'Origin')
-      res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS')
+      res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
       res.header('Access-Control-Allow-Headers', `Content-Type, ${API_TOKEN_HEADER}`)
     }
     if (req.method === 'OPTIONS') {

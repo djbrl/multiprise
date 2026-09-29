@@ -10,7 +10,7 @@ import { listListeningPorts, processGroups } from '../ports'
 import { getLogs, getProcessPid, isManagedProcessGroup } from '../processes'
 import { detectStartupConflict } from '../failures'
 import { processExists, processWorkingDirectory, terminateExternalProcess } from '../commands'
-import { launchService, stopService } from '../launch'
+import { launchWithDependencies, stopService } from '../launch'
 import { handle, isSameOrInside } from '../http'
 import { type ApiContext } from './context'
 
@@ -56,7 +56,7 @@ export function registerServiceRoutes(app: Express, { state, launches }: ApiCont
       return res.status(404).send('Project not found')
     }
     const payload = (req.body && typeof req.body === 'object' ? req.body : {}) as StartProjectPayload
-    res.json(await launchService(state, launches, project, payload))
+    res.json(await launchWithDependencies(state, launches, project, payload))
   }))
 
   app.post('/api/projects/:id/stop', handle(async (req: Request, res: Response) => {

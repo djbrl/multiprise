@@ -97,7 +97,10 @@ export async function normalizeProjects(state: AppState) {
         last_exit_code: previous?.last_exit_code ?? null,
         last_exit_at: previous?.last_exit_at ?? null,
         last_error: null,
-        created_at: previous?.created_at ?? new Date().toISOString()
+        created_at: previous?.created_at ?? new Date().toISOString(),
+        ...(previous?.env ? { env: previous.env } : {}),
+        ...(previous?.secret_env ? { secret_env: previous.secret_env } : {}),
+        ...(previous?.links ? { links: previous.links } : {})
       })
     }
 
@@ -117,13 +120,23 @@ export async function normalizeProjects(state: AppState) {
       install_root: project.install_root,
       framework: project.framework,
       kind: project.kind,
-      role: project.role
+      role: project.role,
+      links: project.links
     })
     const before = existing.map(fingerprint).sort().join('|')
     const after = [...reconciled, ...retained].map(fingerprint).sort().join('|')
     if (before !== after) {
       state.projects = state.projects.filter((project) => !existing.includes(project))
       state.projects.push(...reconciled, ...retained)
+      changed = true
+    }
+  }
+
+  // A rescan can drop services; links to them go too.
+  const ids = new Set(state.projects.map((project) => project.id))
+  for (const project of state.projects) {
+    if (project.links?.some((id) => !ids.has(id))) {
+      project.links = project.links.filter((id) => ids.has(id))
       changed = true
     }
   }

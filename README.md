@@ -63,6 +63,15 @@ The names come from a small reverse proxy inside Multiprise that listens on the 
 
 Both are in **Settings → Stable hostnames** (the `proxy_port` and `hostnames` settings), and changes apply as soon as they are saved. If the port is taken when Multiprise starts, the proxy stays off, services keep working on their own ports, and `/api/hostnames` reports why.
 
+## Service Links and Environment
+
+Each service's **Environment…** button (in its details) edits the variables it starts with and the services it depends on.
+
+- **Variables** are added to what Multiprise sets itself (`PORT`, `BACKEND_PORT`, `FRONTEND_PORT`, …) and win over it, except `PORT`. A value can point at another service: `{{services.api.url}}`, `{{services.api.port}}` or `{{services.api.host_url}}`, where `api` is a service in the same project, `project/service`, or a service id.
+- **Secrets** are stored encrypted in `secrets.json` with a key held in the macOS Keychain (Electron `safeStorage`), are never shown again, and never reach `projects.json` or the API.
+- **Depends on** lists services that start first whenever this one starts, in dependency order, with their own settings; loops are refused. Without links, the backend-before-frontend order and linked ports work as before.
+- A **`.env.example`** (or `.env.sample`, `.env.template`) without a `.env` is flagged in the editor, with a button to add the missing variables, and in the service log when it starts.
+
 ## Why It Exists
 
 A normal multi-project development session quickly turns into terminal management:
@@ -266,6 +275,7 @@ multiprise/
 │   │   ├── supervisor.ts        # Health checks and crash restarts
 │   │   ├── docker.ts            # Docker Compose status and log streaming
 │   │   ├── hostnames.ts         # *.localhost reverse proxy
+│   │   ├── environment.ts       # Service variables, secrets, templates, .env checks
 │   │   ├── events.ts            # Status, log, and project change events
 │   │   ├── logfiles.ts          # Per-run service log files on disk
 │   │   ├── preparation.ts       # Dependency install and missing-build preparation
@@ -277,6 +287,8 @@ multiprise/
 │   └── tsconfig.json
 ├── renderer/
 │   ├── src/App.vue              # Main Vue application
+│   ├── src/components/          # Dialogs and panels split out of App.vue
+│   ├── src/ui.ts                # Shared button, input, and panel classes
 │   ├── src/style.css            # Tailwind layers and theme tokens
 │   └── vite.config.js
 ├── backend/test/                # Fixture-driven reliability regressions
@@ -315,7 +327,7 @@ Run the launch-pipeline regression suite with:
 npm run test:backend
 ```
 
-The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. The hostname proxy is tested end to end: naming rules, proxied requests with their headers, WebSocket upgrades, IPv6-only servers, error pages, foreign hosts, and a taken port. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Service links and environments are tested end to end: link validation and loops, dependencies starting first with their sibling ports, templates, secrets that are never returned or written to `projects.json`, invalid variables, `.env.example` warnings, and settings surviving a restart. The hostname proxy is tested end to end: naming rules, proxied requests with their headers, WebSocket upgrades, IPv6-only servers, error pages, foreign hosts, and a taken port. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
 
 ## Run From Source
 
