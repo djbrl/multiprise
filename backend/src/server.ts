@@ -23,11 +23,12 @@ import {
   type UsedPort
 } from './types'
 import { adaptCommandForFramework, detectProject, discoverProjectServices, scanProjects } from './scanner'
-import { listListeningPorts, pickAvailablePort, processGroups } from './ports'
+import { isPortAvailable, listListeningPorts, pickAvailablePort, processGroups } from './ports'
 import {
   LaunchCancelledError,
   appendProcessLog,
   clearLogs,
+  forgetLogs,
   getLogs,
   getProcessPid,
   getProcessStatus,
@@ -39,6 +40,8 @@ import {
   stopProcess
 } from './processes'
 import { prepareService } from './preparation'
+import { subscribe } from './events'
+import { deleteLogFiles } from './logfiles'
 import { detectStartupConflict } from './failures'
 import { persistProjects, persistSettings } from './state'
 import { sanitizeSettings } from './store'
@@ -221,6 +224,16 @@ function projectRoleFallback(project: Project): 'backend' | 'frontend' | 'servic
 }
 
 const SERVICE_ROLES = new Set(['backend', 'frontend', 'service'])
+
+// A service keeps the port it had last time whenever that port is still free,
+// so its URL, bookmarks and OAuth callbacks survive a relaunch.
+async function previousPortIfFree(project: Project, state: AppState, listening: Array<{ port: number }>) {
+  const port = project.port
+  if (!port || project.kind === 'docker_compose') return undefined
+  if (listening.some((entry) => entry.port === port)) return undefined
+  if (state.projects.some((entry) => entry.id !== project.id && entry.port === port)) return undefined
+  return await isPortAvailable(port) ? port : undefined
+}
 
 async function spawnCommand(command: string, cwd: string, env?: Record<string, string>, onLine?: (stream: 'stdout' | 'stderr', line: string) => void) {
   const processEnv = { ...process.env, ...(env ?? {}) }
@@ -580,11 +593,39 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
     if (launch) launch.cancelled = true
   }
 
+  // Every open window refreshes the ports list; they share one lsof run per second.
+  let listeningCache: { at: number; ports: Promise<Awaited<ReturnType<typeof listListeningPorts>>> } | null = null
+  const recentListeningPorts = () => {
+    if (!listeningCache || Date.now() - listeningCache.at > 1000) {
+      listeningCache = { at: Date.now(), ports: listListeningPorts() }
+    }
+    return listeningCache.ports
+  }
+
   app.use(apiGuard(security))
   app.use(express.json({ limit: '2mb' }))
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ ok: true, time: new Date().toISOString() })
+  })
+
+  // Server-sent events: status changes, log lines and project edits are pushed
+  // as they happen instead of the renderer polling for them.
+  app.get('/api/events', (req: Request, res: Response) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive'
+    })
+    res.write(': connected\n\n')
+    const unsubscribe = subscribe((event) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`)
+    })
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), 15000)
+    req.on('close', () => {
+      clearInterval(heartbeat)
+      unsubscribe()
+    })
   })
 
   app.get('/api/projects', (_req: Request, res: Response) => {
@@ -783,6 +824,8 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
     await stopProcess(id)
     state.projects = state.projects.filter((entry) => entry.id !== id)
     await persistProjects(state)
+    forgetLogs(id)
+    deleteLogFiles(id)
     res.json({ ok: true })
   }))
 
@@ -840,6 +883,10 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
       }
       if (port && listening.some((entry) => entry.port === port)) {
         return res.status(400).send(`Port ${port} is already in use`)
+      }
+      // "Start another instance" forces a fresh port; every other launch reuses the previous one.
+      if (!port && autoPort && !payload.force_auto_port) {
+        port = await previousPortIfFree(project, state, listening)
       }
       // Compose files declare their own ports, so none is reserved for them.
       if (!port && autoPort && project.kind !== 'docker_compose') {
@@ -1168,7 +1215,7 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
   }))
 
   app.get('/api/ports/used', handle(async (_req: Request, res: Response) => {
-    const listening = await listListeningPorts()
+    const listening = await recentListeningPorts()
     const groups = await processGroups(listening.map((entry) => entry.pid))
     const ports: UsedPort[] = []
     const listeningByPort = new Map<number, { pid: number; command: string | null }>()
@@ -1205,8 +1252,10 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
   }))
 
   app.post('/api/ports/allocate', handle(async (req: Request, res: Response) => {
-    const payload = req.body as AllocatePortsPayload
-    const roles = ensureArray(payload.roles)
+    const payload = (req.body && typeof req.body === 'object' ? req.body : {}) as AllocatePortsPayload
+    const services = stringArray(payload.services)
+      .map((id) => state.projects.find((project) => project.id === id))
+      .filter((project): project is Project => !!project && project.kind !== 'docker_compose')
     const usedPorts = new Set<number>()
     const listening = await listListeningPorts()
     listening.forEach((entry) => usedPorts.add(entry.port))
@@ -1214,15 +1263,14 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
       if (entry.port) usedPorts.add(entry.port)
     })
 
-    const ports: Partial<Record<'backend' | 'frontend' | 'service', number>> = {}
-    for (const role of roles) {
-      if (!['backend', 'frontend', 'service'].includes(role)) continue
-      if (ports[role]) continue
-      const port = await pickAvailablePort({ role, used: usedPorts, preferredBase: state.settings.port_base })
+    const ports: Record<string, number> = {}
+    for (const project of services) {
+      const port = await previousPortIfFree(project, state, listening) ??
+        await pickAvailablePort({ role: projectRoleFallback(project), used: usedPorts, preferredBase: state.settings.port_base })
       if (!port) {
-        return res.status(400).send(`No ports available for ${role}`)
+        return res.status(400).send(`No ports available for ${project.name}`)
       }
-      ports[role] = port
+      ports[project.id] = port
       usedPorts.add(port)
     }
 

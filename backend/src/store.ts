@@ -3,15 +3,18 @@ import path from 'node:path'
 import { type Project, type Settings } from './types'
 
 const rootDir = path.resolve(__dirname, '..', '..')
-const dataDir = process.env.MULTIPRISE_DATA_DIR
+// Read on every use: Electron sets MULTIPRISE_DATA_DIR before the backend starts, and
+// nothing should depend on which module happened to import the store first.
+export const dataDir = () => process.env.MULTIPRISE_DATA_DIR
   ? path.resolve(process.env.MULTIPRISE_DATA_DIR)
   : path.join(rootDir, 'backend', 'data')
-const projectsFile = path.join(dataDir, 'projects.json')
-const settingsFile = path.join(dataDir, 'settings.json')
+const projectsFile = () => path.join(dataDir(), 'projects.json')
+const settingsFile = () => path.join(dataDir(), 'settings.json')
 
 const defaultSettings: Settings = {
   auto_port: true,
   auto_install: true,
+  notifications: true,
   port_base: 3000,
   startup_timeout_ms: 20000,
   scan_depth: 8,
@@ -20,7 +23,7 @@ const defaultSettings: Settings = {
 }
 
 async function ensureDataDir() {
-  await fs.mkdir(dataDir, { recursive: true })
+  await fs.mkdir(dataDir(), { recursive: true })
 }
 
 async function readJson<T>(file: string): Promise<T | null> {
@@ -62,13 +65,13 @@ function writeJson<T>(file: string, data: T): Promise<void> {
 }
 
 export async function loadProjects(): Promise<Project[]> {
-  const data = await readJson<Project[]>(projectsFile)
+  const data = await readJson<Project[]>(projectsFile())
   if (!data || !Array.isArray(data)) return []
   return data
 }
 
 export async function saveProjects(projects: Project[]): Promise<void> {
-  await writeJson(projectsFile, projects)
+  await writeJson(projectsFile(), projects)
 }
 
 const clampInteger = (value: unknown, min: number, max: number, fallback: number) => {
@@ -82,6 +85,7 @@ export function sanitizeSettings(input: unknown, base: Settings = defaultSetting
   return {
     auto_port: typeof data.auto_port === 'boolean' ? data.auto_port : base.auto_port,
     auto_install: typeof data.auto_install === 'boolean' ? data.auto_install : base.auto_install,
+    notifications: typeof data.notifications === 'boolean' ? data.notifications : base.notifications,
     port_base: clampInteger(data.port_base, 1024, 64535, base.port_base),
     startup_timeout_ms: clampInteger(data.startup_timeout_ms, 10000, 30000, base.startup_timeout_ms),
     scan_depth: clampInteger(data.scan_depth, 1, 64, base.scan_depth),
@@ -93,10 +97,10 @@ export function sanitizeSettings(input: unknown, base: Settings = defaultSetting
 }
 
 export async function loadSettings(): Promise<Settings> {
-  const data = await readJson<Settings>(settingsFile)
+  const data = await readJson<Settings>(settingsFile())
   return sanitizeSettings(data)
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
-  await writeJson(settingsFile, settings)
+  await writeJson(settingsFile(), settings)
 }

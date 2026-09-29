@@ -57,14 +57,23 @@ type DetectResponse = {
 }
 
 type LogLine = {
+  seq: number
   timestamp: string
   stream: 'stdout' | 'stderr'
   line: string
+  repeat?: number
 }
+
+type AppEvent =
+  | { type: 'log'; id: string; entry: LogLine; replace: boolean }
+  | { type: 'logs-cleared'; id: string }
+  | { type: 'status'; id: string; status: ProcessStatus }
+  | { type: 'projects' }
 
 type Settings = {
   auto_port: boolean
   auto_install: boolean
+  notifications: boolean
   port_base: number
   startup_timeout_ms: number
   scan_depth: number
@@ -478,6 +487,7 @@ const externalMenuOpen = reactive<Record<string, boolean>>({})
 const settings = reactive<Settings>({
   auto_port: true,
   auto_install: true,
+  notifications: true,
   port_base: 3000,
   startup_timeout_ms: 20000,
   scan_depth: 8,
@@ -487,6 +497,7 @@ const settings = reactive<Settings>({
 const settingsDraft = reactive<Settings>({
   auto_port: true,
   auto_install: true,
+  notifications: true,
   port_base: 3000,
   startup_timeout_ms: 20000,
   scan_depth: 8,
@@ -586,12 +597,21 @@ const sidebarThemeStyle = computed(() => {
   }
 })
 
-const refreshMs = 2000
-const telemetryRefreshMs = 750
-const portsRefreshMs = 2000
+// Changes arrive over the event stream; these slow refreshes only catch what it cannot
+// see (Docker, processes started outside Multiprise) or a dropped connection.
+const refreshMs = 15000
+const telemetryRefreshMs = 5000
+const portsRefreshMs = 10000
+const MAX_CLIENT_LOG_LINES = 2000
+const LOG_FETCH_TAIL = 1000
 let refreshTimer: number | undefined
 let telemetryTimer: number | undefined
 let lastPortsRefreshAt = 0
+let eventStreamAbort: AbortController | null = null
+const eventStreamConnected = ref(false)
+let eventStreamRetryTimer: number | undefined
+let projectsReloadTimer: number | undefined
+let portsReloadTimer: number | undefined
 const documentVisible = ref(!document.hidden)
 const SETTINGS_STORAGE_KEY = 'multiprise_settings'
 const SELECTED_GROUP_STORAGE_KEY = 'multiprise_selected_group'
@@ -1406,7 +1426,7 @@ const selectedLogLines = computed(() => {
           entry.serviceName.toLowerCase().includes(query)
       )
     : levelFiltered
-  return filtered.slice(-200)
+  return filtered.slice(-500)
 })
 function servicePid(service: ProjectView) {
   return service.status.pid ?? (processInstances[service.project.id] ?? []).find((instance) => instance.pid)?.pid ?? null
@@ -2154,24 +2174,113 @@ async function killInstance(project: ProjectView, pid: number) {
   }
 }
 
-function logsMatch(current: LogLine[], incoming: LogLine[]) {
-  if (current.length !== incoming.length) return false
-  return current.every((entry, index) => {
-    const candidate = incoming[index]
-    return candidate && entry.timestamp === candidate.timestamp && entry.stream === candidate.stream && entry.line === candidate.line
-  })
-}
-
 async function fetchLogs(id: string) {
   try {
-    const response = await apiFetch(`/api/projects/${id}/logs?tail=200`)
+    const response = await apiFetch(`/api/projects/${id}/logs?tail=${LOG_FETCH_TAIL}`)
     if (!response.ok) return
     const data = (await response.json()) as { logs: LogLine[] }
-    const current = logs[id] ?? []
-    if (!logsMatch(current, data.logs)) logs[id] = data.logs
+    // Lines streamed while the request was in flight are newer than the snapshot; keep them.
+    const snapshotSeq = data.logs[data.logs.length - 1]?.seq ?? 0
+    const streamed = (logs[id] ?? []).filter((entry) => entry.seq > snapshotSeq)
+    logs[id] = [...data.logs, ...streamed]
   } catch (err) {
     return
   }
+}
+
+function applyLogEvent(id: string, entry: LogLine, replace: boolean) {
+  const current = logs[id] ?? (logs[id] = [])
+  const last = current[current.length - 1]
+  if (replace && last?.seq === entry.seq) {
+    current.splice(current.length - 1, 1, entry)
+    return
+  }
+  if (last && entry.seq <= last.seq) return
+  current.push(entry)
+  if (current.length > MAX_CLIENT_LOG_LINES) current.splice(0, current.length - MAX_CLIENT_LOG_LINES)
+}
+
+function scheduleProjectsReload() {
+  if (projectsReloadTimer) return
+  projectsReloadTimer = window.setTimeout(async () => {
+    projectsReloadTimer = undefined
+    await loadProjects()
+  }, 120)
+}
+
+function schedulePortsReload() {
+  if (!activePortsExpanded.value || portsReloadTimer) return
+  // Give a service that just became ready a moment to show up in lsof.
+  portsReloadTimer = window.setTimeout(async () => {
+    portsReloadTimer = undefined
+    await fetchUsedPorts({ silent: true })
+  }, 600)
+}
+
+function handleAppEvent(event: AppEvent) {
+  if (event.type === 'log') {
+    applyLogEvent(event.id, event.entry, event.replace)
+  } else if (event.type === 'logs-cleared') {
+    logs[event.id] = []
+  } else if (event.type === 'status') {
+    const view = projects.value.find((item) => item.project.id === event.id)
+    if (view) view.status = event.status
+    scheduleProjectsReload()
+    schedulePortsReload()
+  } else if (event.type === 'projects') {
+    scheduleProjectsReload()
+  }
+}
+
+// EventSource cannot send the API token header, so the stream is read through fetch.
+async function connectEventStream() {
+  if (eventStreamAbort) return
+  const controller = new AbortController()
+  eventStreamAbort = controller
+  let connected = false
+  try {
+    const response = await apiFetch('/api/events', { signal: controller.signal })
+    if (!response.ok || !response.body) throw new Error('Event stream unavailable')
+    connected = true
+    eventStreamConnected.value = true
+    // Anything that happened while disconnected was missed; resynchronise once.
+    await Promise.all([loadProjects(), refreshSelectedLogs()])
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+    let buffer = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += value
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary !== -1) {
+        const frame = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const data = frame.split('\n').filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join('\n')
+        if (data) {
+          try {
+            handleAppEvent(JSON.parse(data) as AppEvent)
+          } catch (err) {
+            console.error('[multiprise] bad event', err)
+          }
+        }
+        boundary = buffer.indexOf('\n\n')
+      }
+    }
+  } catch (err) {
+    // Aborted on unmount, or the backend went away; the retry below covers the latter.
+  } finally {
+    if (eventStreamAbort === controller) eventStreamAbort = null
+    eventStreamConnected.value = false
+  }
+  if (controller.signal.aborted) return
+  eventStreamRetryTimer = window.setTimeout(connectEventStream, connected ? 500 : 3000)
+}
+
+function disconnectEventStream() {
+  if (eventStreamRetryTimer) window.clearTimeout(eventStreamRetryTimer)
+  eventStreamRetryTimer = undefined
+  eventStreamAbort?.abort()
+  eventStreamAbort = null
 }
 
 async function refreshSelectedLogs() {
@@ -2284,34 +2393,29 @@ async function launchGroup(group: Group<ProjectView>, manualPorts?: Record<strin
     const supportServices = regularServices.filter((service) => serviceRole(service) === 'service')
     const primaryBackend = backendServices[0]
     const primaryFrontend = frontendServices[0]
-    const rolesToAllocate: ServiceRole[] = []
-    const existingBackendPort = primaryBackend
-      ? servicePort(primaryBackend) ?? (primaryBackend.status.running ? effectivePort(primaryBackend) ?? undefined : undefined)
-      : undefined
-    const existingFrontendPort = primaryFrontend
-      ? servicePort(primaryFrontend) ?? (primaryFrontend.status.running ? effectivePort(primaryFrontend) ?? undefined : undefined)
-      : undefined
+    const runningPort = (service?: ProjectView) =>
+      service?.status.running ? effectivePort(service) ?? undefined : undefined
+    // The backend hands each stopped service its previous port when it is still free, so URLs stay stable.
+    const servicesToAllocate = settings.auto_port
+      ? [primaryBackend, primaryFrontend].filter((service): service is ProjectView => !!service && !service.status.running)
+      : []
 
-    if (settings.auto_port && primaryBackend && !primaryBackend.status.running && !existingBackendPort) rolesToAllocate.push('backend')
-    if (settings.auto_port && primaryFrontend && !primaryFrontend.status.running && !existingFrontendPort) rolesToAllocate.push('frontend')
-
-    let allocatedPorts: Partial<Record<ServiceRole, number>> = {}
-    if (rolesToAllocate.length) {
+    let allocatedPorts: Record<string, number> = {}
+    if (servicesToAllocate.length) {
       const response = await apiFetch('/api/ports/allocate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roles: rolesToAllocate })
+        body: JSON.stringify({ services: servicesToAllocate.map((service) => service.project.id) })
       })
       if (!response.ok) await throwResponseError(response, 'Failed to allocate ports')
-      allocatedPorts = ((await response.json()) as { ports?: Partial<Record<ServiceRole, number>> }).ports ?? {}
+      allocatedPorts = ((await response.json()) as { ports?: Record<string, number> }).ports ?? {}
     }
 
-    const backendPort = primaryBackend
-      ? manualPorts?.[primaryBackend.project.id] ?? existingBackendPort ?? allocatedPorts.backend
+    const portFor = (service?: ProjectView) => service
+      ? manualPorts?.[service.project.id] ?? runningPort(service) ?? allocatedPorts[service.project.id] ?? servicePort(service)
       : undefined
-    const frontendPort = primaryFrontend
-      ? manualPorts?.[primaryFrontend.project.id] ?? existingFrontendPort ?? allocatedPorts.frontend
-      : undefined
+    const backendPort = portFor(primaryBackend)
+    const frontendPort = portFor(primaryFrontend)
     const groupEnv: Record<string, string> = {}
     if (backendPort) groupEnv.BACKEND_PORT = String(backendPort)
     if (frontendPort) groupEnv.FRONTEND_PORT = String(frontendPort)
@@ -2494,6 +2598,9 @@ function applySettingsPatch(patch: Partial<Settings>) {
   if (typeof patch.auto_install === 'boolean') {
     settings.auto_install = patch.auto_install
   }
+  if (typeof patch.notifications === 'boolean') {
+    settings.notifications = patch.notifications
+  }
   if (typeof patch.startup_timeout_ms === 'number' && Number.isFinite(patch.startup_timeout_ms)) {
     settings.startup_timeout_ms = Math.min(Math.max(Math.floor(patch.startup_timeout_ms), 10000), 30000)
   }
@@ -2516,6 +2623,7 @@ function normalizeDraftSettings(draft: Settings) {
   return {
     auto_port: !!draft.auto_port,
     auto_install: !!draft.auto_install,
+    notifications: !!draft.notifications,
     startup_timeout_ms: Math.min(Math.max(Math.floor(draft.startup_timeout_ms ?? settings.startup_timeout_ms), 10000), 30000),
     port_base: Math.min(Math.max(Math.floor(draft.port_base ?? settings.port_base), 1), 65535),
     scan_depth: Math.min(Math.max(Math.floor(draft.scan_depth ?? settings.scan_depth), 1), 64),
@@ -2530,6 +2638,7 @@ function normalizeDraftSettings(draft: Settings) {
 function syncSettingsDraftFromSettings() {
   settingsDraft.auto_port = settings.auto_port
   settingsDraft.auto_install = settings.auto_install
+  settingsDraft.notifications = settings.notifications
   settingsDraft.startup_timeout_ms = settings.startup_timeout_ms
   settingsDraft.port_base = settings.port_base
   settingsDraft.scan_depth = settings.scan_depth
@@ -2543,6 +2652,7 @@ const settingsDirty = computed(() => {
   return (
     draft.auto_port !== settings.auto_port ||
     draft.auto_install !== settings.auto_install ||
+    draft.notifications !== settings.notifications ||
     draft.startup_timeout_ms !== settings.startup_timeout_ms ||
     draft.port_base !== settings.port_base ||
     draft.scan_depth !== settings.scan_depth ||
@@ -2702,9 +2812,10 @@ function handleWindowKeydown(event: KeyboardEvent) {
   }
 }
 
+// Logs arrive over the event stream; only ports need polling, since external
+// processes can take or release a port without Multiprise hearing about it.
 async function refreshLiveTelemetry() {
-  if (document.hidden || projects.value.length === 0) return
-  if (selectedGroup.value) await refreshSelectedLogs()
+  if (document.hidden || projects.value.length === 0 || !activePortsExpanded.value) return
   if (Date.now() - lastPortsRefreshAt >= portsRefreshMs) {
     await fetchUsedPorts({ silent: true })
   }
@@ -2757,6 +2868,7 @@ onMounted(async () => {
     await fetchUsedPorts()
   }
   await startAutoRefresh()
+  connectEventStream()
   if (pickerOpen.value && selectedFolders.value.length) {
     await refreshProjectPreviews()
   }
@@ -2777,6 +2889,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopAutoRefresh()
+  disconnectEventStream()
+  if (projectsReloadTimer) window.clearTimeout(projectsReloadTimer)
+  if (portsReloadTimer) window.clearTimeout(portsReloadTimer)
   clearScanTimer()
   if (copiedServiceUrlTimer) window.clearTimeout(copiedServiceUrlTimer)
   browserResizeObserver?.disconnect()
@@ -3662,8 +3777,8 @@ onBeforeUnmount(() => {
                             </div>
                           </div>
                           <span v-if="projectPanelMode === 'logs'" class="flex items-center gap-2 text-[11px] text-white/45">
-                            <span class="h-1.5 w-1.5 rounded-full bg-[var(--live)]" :class="documentVisible ? 'animate-pulse' : 'opacity-40'"></span>
-                            {{ documentVisible ? 'Live' : 'Paused' }} · {{ selectedLogLines.length }} lines
+                            <span class="h-1.5 w-1.5 rounded-full bg-[var(--live)]" :class="eventStreamConnected ? 'animate-pulse' : 'opacity-40'"></span>
+                            {{ eventStreamConnected ? 'Live' : 'Reconnecting' }} · {{ selectedLogLines.length }} lines
                           </span>
                           <span v-else-if="activeBrowserTab?.detached" class="text-[11px] text-white/45">Detached window</span>
                         </div>
@@ -3716,13 +3831,18 @@ onBeforeUnmount(() => {
                               </div>
                               <div
                                 v-for="entry in selectedLogLines"
-                                :key="`${entry.timestamp}-${entry.serviceName}-${entry.line}`"
+                                :key="entry.seq"
                                 class="flex min-w-0 gap-2 border-l-2 px-2 py-0.5"
                                 :class="logRowTone(entry)"
                               >
                                 <span class="w-[58px] shrink-0 text-[10px] text-[var(--text-subtle)]">{{ formatTime(entry.timestamp) }}</span>
                                 <span class="w-[58px] shrink-0 truncate text-[10px] font-semibold" :class="logServiceTone(entry)">{{ entry.serviceName }}</span>
                                 <span class="min-w-0 flex-1 whitespace-pre-wrap break-words" :class="logLineTone(entry)" v-html="highlightText(entry.line, logFilter)"></span>
+                                <span
+                                  v-if="entry.repeat && entry.repeat > 1"
+                                  class="shrink-0 self-start rounded-full bg-[var(--hover)] px-1.5 text-[10px] font-semibold text-[var(--text-muted)]"
+                                  :title="`Printed ${entry.repeat} times in a row`"
+                                >×{{ entry.repeat }}</span>
                               </div>
                             </div>
                             <button
@@ -3919,6 +4039,16 @@ onBeforeUnmount(() => {
                       <div class="flex shrink-0 rounded-lg bg-[var(--panel-bg)] p-1">
                         <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="settingsDraft.auto_install ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.auto_install = true">On</button>
                         <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="!settingsDraft.auto_install ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.auto_install = false">Off</button>
+                      </div>
+                    </div>
+                    <div class="mt-5 flex items-center justify-between gap-4 border-t border-[var(--border)] pt-4">
+                      <span>
+                        <span class="block text-sm text-[var(--text)]">Notifications</span>
+                        <span class="mt-0.5 block text-xs text-[var(--text-subtle)]">Notify when a service crashes, or is ready after a slow start, while Multiprise is in the background.</span>
+                      </span>
+                      <div class="flex shrink-0 rounded-lg bg-[var(--panel-bg)] p-1">
+                        <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="settingsDraft.notifications ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.notifications = true">On</button>
+                        <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="!settingsDraft.notifications ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.notifications = false">Off</button>
                       </div>
                     </div>
                     <label class="mt-5 block border-t border-[var(--border)] pt-4">

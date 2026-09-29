@@ -132,6 +132,10 @@ function canBind(port: number, host: string) {
   })
 }
 
+export async function isPortAvailable(port: number) {
+  return await canBind(port, '127.0.0.1') && await canBind(port, '::1')
+}
+
 // lsof cannot see listeners owned by other users (e.g. root daemons), so confirm
 // a candidate really is free by binding it before handing it to a service.
 export async function pickAvailablePort(options: Parameters<typeof pickRandomPort>[0]): Promise<number | null> {
@@ -139,7 +143,7 @@ export async function pickAvailablePort(options: Parameters<typeof pickRandomPor
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const port = await pickRandomPort({ ...options, used })
     if (!port) return null
-    if (await canBind(port, '127.0.0.1') && await canBind(port, '::1')) return port
+    if (await isPortAvailable(port)) return port
     used.add(port)
     options.used.add(port)
   }

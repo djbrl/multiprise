@@ -94,6 +94,8 @@ The current defaults live in [`port-ranges.json`](./port-ranges.json):
 - frontend: `3000-4999` and `5100-5999`;
 - backend: `5000-5099` and `8000-8999`.
 
+A service keeps the port it had last time whenever that port is still free, so its URL — and any bookmark, OAuth callback, or CORS allowlist pointing at it — survives a relaunch. A new port is chosen only when the old one has been taken.
+
 The ranges deliberately avoid overlap. Manual mode is strict: the user must select a port, and launch fails clearly if that port is unavailable. Launching a whole project resolves backend and frontend ports together so both services receive `BACKEND_PORT`, `FRONTEND_PORT`, `PORT`, and inferred frontend API values consistently.
 
 ### 5. Add process ownership and reliable shutdown
@@ -106,18 +108,22 @@ Quitting Multiprise stops every service it launched, including dependency instal
 
 Docker Compose definitions are shown separately and remain manually controlled. The project-level Launch action starts regular development services, not Docker services.
 
+Closing the window does not stop anything. A menu bar icon shows how many services are running and lets you start, stop, retry, or open each one without bringing the window back. When Multiprise is in the background, a notification reports a service that crashes or one that becomes ready after a slow start; both can be turned off in Settings.
+
 ### 6. Turn process output into usable logs
 
-Child-process `stdout` and `stderr` are captured by the TypeScript backend and sent to the renderer. Before display, Multiprise:
+Child-process `stdout` and `stderr` are captured by the TypeScript backend and pushed to the renderer over a server-sent event stream as they are printed, together with status changes. Before display, Multiprise:
 
 - removes terminal control sequences;
 - handles progress-line rewrites produced by watch tools;
-- suppresses repeated identical lines;
+- collapses consecutive identical lines into one entry with a `×N` counter;
 - associates every line with a project and service;
 - classifies common error, warning, backend, and frontend output;
 - keeps the log view pinned to the newest output unless the user scrolls away.
 
 The result is a searchable terminal-style log surface without the unreadable escape codes commonly produced by development servers.
+
+Each run is also written to disk, and the run before it is kept alongside, so the output of a crash is still there after a relaunch or after Multiprise itself restarts.
 
 Packaged macOS apps opened from Finder do not inherit the terminal's `PATH`. Before the backend loads, Electron now imports the user's interactive login-shell path so npm, pnpm, Bun, Cargo, and other shell-installed runtimes remain available. Every command is preflighted before spawn, turning a missing runtime into an immediate actionable error instead of a silent or repeated shell failure.
 
@@ -157,7 +163,7 @@ Local state is stored under:
 ~/Library/Application Support/Multiprise/data/
 ```
 
-That directory contains tracked projects and settings. It is intentionally excluded from Git and from release artifacts.
+That directory contains tracked projects, settings, and a `logs/` folder with each service's latest and previous run. It is intentionally excluded from Git and from release artifacts.
 
 The first packaged smoke test caught an important ordering bug: the backend module was imported before its writable data directory was configured, causing it to target the read-only application archive. Backend loading is now deferred until Electron has established `MULTIPRISE_DATA_DIR`.
 
@@ -211,6 +217,8 @@ multiprise/
 │   │   ├── scanner.ts           # Project and runtime discovery
 │   │   ├── runtime.ts           # Node version resolution (.nvmrc, engines, fnm)
 │   │   ├── processes.ts         # Starting/ready/failed lifecycle and logs
+│   │   ├── events.ts            # Status, log, and project change events
+│   │   ├── logfiles.ts          # Per-run service log files on disk
 │   │   ├── preparation.ts       # Dependency install and missing-build preparation
 │   │   ├── failures.ts          # Actionable startup error classification
 │   │   ├── ports.ts             # Port inspection and allocation
@@ -224,6 +232,7 @@ multiprise/
 ├── .github/workflows/ci.yml     # Build and reliability checks
 ├── scripts/dev.mjs              # Portable development launcher
 ├── main.cjs                     # Electron main process
+├── menu-bar.cjs                 # Menu bar icon and service notifications
 ├── preload.cjs                  # Context-isolated renderer bridge
 ├── port-ranges.json             # Automatic allocation ranges
 ├── PROJECT_DISCOVERY.md         # Manifest discovery rules

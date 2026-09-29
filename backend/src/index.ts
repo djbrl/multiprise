@@ -2,6 +2,8 @@ import http from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { createApp } from './server'
 import { stopAllProcesses } from './processes'
+
+export { subscribe } from './events'
 import { createState, normalizeProjects, type AppState } from './state'
 
 export type BackendInstance = {

@@ -363,7 +363,7 @@ async function startTestApi(options = {}) {
   }
   const json = (method, route, value, headers = {}) =>
     call(route, { method, body: typeof value === 'string' ? value : JSON.stringify(value), headers: { 'content-type': 'application/json', ...headers } })
-  return { state, call, json, close: () => new Promise((resolve) => server.close(resolve)) }
+  return { state, port, call, json, close: () => new Promise((resolve) => server.close(resolve)) }
 }
 
 test('the API rejects requests without the launch token, from foreign origins, or via foreign hosts', async (context) => {
@@ -641,4 +641,82 @@ test('overlapping folders and broken manifests are rejected with a clear reason'
   assert.match(response.body, /package\.json is not valid JSON/)
 
   assert.equal((await api.json('POST', `/api/projects/${api.state.projects[0].id}/open`, { target: 'bogus' })).status, 400)
+})
+
+test('a relaunched service keeps its previous port while it is free', async (context) => {
+  const api = await startTestApi()
+  const root = await httpServiceFixture('multiprise-sticky')
+  const [created] = JSON.parse((await api.json('POST', '/api/projects', { path: root })).body).projects
+  const id = created.project.id
+  context.after(async () => { await processes.stopProcess(id); await api.close() })
+
+  assert.equal((await api.json('POST', `/api/projects/${id}/start`, { role: 'backend' })).status, 200)
+  const first = api.state.projects[0].port
+  assert.equal((await api.json('POST', `/api/projects/${id}/stop`, {})).status, 200)
+  assert.equal((await api.json('POST', `/api/projects/${id}/start`, { role: 'backend' })).status, 200)
+  assert.equal(api.state.projects[0].port, first)
+
+  const allocated = JSON.parse((await api.json('POST', '/api/ports/allocate', { services: [id] })).body).ports
+  assert.notEqual(allocated[id], first, 'a running service holds its port, so allocation picks another')
+  assert.equal((await api.json('POST', `/api/projects/${id}/stop`, {})).status, 200)
+  const reallocated = JSON.parse((await api.json('POST', '/api/ports/allocate', { services: [id] })).body).ports
+  assert.equal(reallocated[id], first)
+})
+
+test('repeated log lines collapse into a counter and are published as updates', () => {
+  const { subscribe } = require('../dist/events.js')
+  const id = 'repeat-test'
+  const events = []
+  const unsubscribe = subscribe((event) => { if (event.id === id) events.push(event) })
+  processes.appendProcessLog(id, 'stdout', 'GET /health 200')
+  processes.appendProcessLog(id, 'stdout', 'GET /health 200')
+  processes.appendProcessLog(id, 'stdout', 'GET /health 200')
+  processes.appendProcessLog(id, 'stderr', 'GET /health 200')
+  unsubscribe()
+
+  const lines = processes.getLogs(id)
+  assert.deepEqual(lines.map((line) => [line.stream, line.repeat ?? 1]), [['stdout', 3], ['stderr', 1]])
+  assert.deepEqual(events.map((event) => event.replace), [false, true, true, false])
+  assert.equal(events[2].entry.seq, events[0].entry.seq)
+})
+
+test('service logs survive a restart and the previous run is kept on relaunch', async () => {
+  const { currentLogPath, previousLogPath } = require('../dist/logfiles.js')
+  const id = 'persist-test'
+  processes.appendProcessLog(id, 'stdout', 'first run')
+  processes.appendProcessLog(id, 'stderr', 'first run crashed')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  // A restarted backend has an empty buffer and refills it from disk.
+  processes.forgetLogs(id)
+  assert.deepEqual(processes.getLogs(id).map((line) => [line.stream, line.line]), [['stdout', 'first run'], ['stderr', 'first run crashed']])
+
+  processes.clearLogs(id)
+  processes.appendProcessLog(id, 'stdout', 'second run')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.deepEqual(processes.getLogs(id).map((line) => line.line), ['second run'])
+  assert.match(await fs.readFile(previousLogPath(id), 'utf8'), /first run crashed/)
+  assert.doesNotMatch(await fs.readFile(currentLogPath(id), 'utf8'), /first run/)
+})
+
+test('the event stream pushes status changes to connected clients', async (context) => {
+  const http = require('node:http')
+  const api = await startTestApi()
+  context.after(() => api.close())
+  const received = []
+  const request = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: api.port, path: '/api/events', headers: { 'x-multiprise-token': 'test-token' } }, (res) => {
+      assert.equal(res.headers['content-type'], 'text/event-stream')
+      res.setEncoding('utf8')
+      res.on('data', (chunk) => received.push(chunk))
+      resolve(req)
+    })
+    req.on('error', reject)
+    req.end()
+  })
+  processes.markProcessStarting('stream-test')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  request.destroy()
+  const events = received.join('').split('\n\n').filter((frame) => frame.startsWith('data: ')).map((frame) => JSON.parse(frame.slice(6)))
+  assert.ok(events.some((event) => event.type === 'status' && event.id === 'stream-test' && event.status.phase === 'starting'))
 })

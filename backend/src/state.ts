@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
+import { publish } from './events'
 import { detectProject, discoverProjectServices } from './scanner'
 import { loadProjects, loadSettings, saveProjects, saveSettings } from './store'
 import { type Project, type Settings, type ScanState } from './types'
@@ -23,6 +24,7 @@ export async function createState(): Promise<AppState> {
 
 export async function persistProjects(state: AppState) {
   await saveProjects(state.projects)
+  publish({ type: 'projects' })
 }
 
 export async function persistSettings(state: AppState) {

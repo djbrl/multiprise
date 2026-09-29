@@ -2,9 +2,11 @@ const { app, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, session
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { createMenuBar } = require('./menu-bar.cjs');
 const { hydrateShellPath } = require('./shell-path.cjs');
 let startServer;
 let stopServer;
+let subscribeToBackend;
 
 const loadBackendModule = () => {
   if (app.isPackaged) return require('./backend/dist/index.js');
@@ -14,6 +16,8 @@ const loadBackendModule = () => {
 
 let mainWindow;
 let backend;
+// Held for the app's lifetime so the menu bar icon is not garbage-collected.
+let menuBar;
 let splashWindow;
 let browserTabs = [];
 let activeBrowserTabId = null;
@@ -35,12 +39,7 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  });
+  app.on('second-instance', () => showMainWindow());
 }
 
 const checkDevServer = (url) =>
@@ -618,6 +617,17 @@ const createWindow = () => {
   });
 };
 
+// Closing the window keeps services running; the menu bar and the Dock bring it back.
+const showMainWindow = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (backend) createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+};
+
 const rendererOrigins = () => {
   if (app.isPackaged) return ['null'];
   const origins = new Set(['null']);
@@ -666,7 +676,7 @@ app.whenReady().then(async () => {
       process.env.MULTIPRISE_DATA_DIR = path.join(app.getPath('userData'), 'data');
     }
     const backendPort = app.isPackaged ? 0 : undefined;
-    ({ startServer, stopServer } = loadBackendModule());
+    ({ startServer, stopServer, subscribe: subscribeToBackend } = loadBackendModule());
     backend = await startServer({ port: backendPort, allowedOrigins: rendererOrigins() });
   } catch (err) {
     closeSplashWindow();
@@ -713,6 +723,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('browser:action', handleBrowserAction);
 
   createWindow();
+  menuBar = createMenuBar({
+    backend,
+    subscribe: subscribeToBackend,
+    showMainWindow,
+    iconPath: path.join(__dirname, 'build', 'trayTemplate.png')
+  });
 
   app.on('activate', () => {
     if (!mainWindow || mainWindow.isDestroyed()) createWindow();

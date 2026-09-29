@@ -9,6 +9,12 @@ const buildDir = path.join(root, 'build')
 const iconsetDir = path.join(buildDir, 'icon.iconset')
 const socialPath = path.join(root, '.github', 'social-preview.png')
 
+// The power strip alone, in black: macOS tints "Template" images for light and dark menu bars.
+const traySvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" fill="none">
+  <rect x="2.75" y="6.75" width="16.5" height="8.5" rx="2.75" stroke="#000" stroke-width="1.5"/>
+  <path d="M7 9.5v3M11 9.5v3M15 9.5v3" stroke="#000" stroke-width="1.5" stroke-linecap="round"/>
+</svg>`
+
 const iconFiles = [
   ['icon_16x16.png', 16],
   ['icon_16x16@2x.png', 32],
@@ -76,6 +82,11 @@ app.whenReady().then(async () => {
       </div>
     </main>`), 'social')
   fs.writeFileSync(socialPath, social.toPNG())
+
+  for (const [name, size] of [['trayTemplate.png', 22], ['trayTemplate@2x.png', 44]]) {
+    const tray = await capture(renderWindow, size, size, pageHtml(traySvg, size, size, (mark) => mark), 'tray')
+    fs.writeFileSync(path.join(buildDir, name), tray.toPNG())
+  }
   renderWindow.destroy()
   app.quit()
 }).catch((error) => {

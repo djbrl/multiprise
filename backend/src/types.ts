@@ -57,14 +57,19 @@ export type DetectResponse = {
 }
 
 export type LogLine = {
+  // Increases across all services; identifies a line when it is updated in place.
+  seq: number
   timestamp: string
   stream: 'stdout' | 'stderr'
   line: string
+  // How many consecutive times this exact line was printed.
+  repeat?: number
 }
 
 export type Settings = {
   auto_port: boolean
   auto_install: boolean
+  notifications: boolean
   port_base: number
   startup_timeout_ms: number
   scan_depth: number
@@ -152,7 +157,8 @@ export type StartProjectPayload = {
 }
 
 export type AllocatePortsPayload = {
-  roles?: ServiceRole[]
+  // Service ids; each gets its previous port when still free, otherwise a new one.
+  services?: string[]
 }
 
 export type UpdateProjectPayload = {

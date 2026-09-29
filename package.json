@@ -49,11 +49,14 @@
     },
     "files": [
       "main.cjs",
+      "menu-bar.cjs",
       "preload.cjs",
       "shell-path.cjs",
       "package.json",
       "port-ranges.json",
       "build/icon.png",
+      "build/trayTemplate.png",
+      "build/trayTemplate@2x.png",
       "renderer/dist/**/*",
       "backend/dist/**/*",
       "backend/package.json"

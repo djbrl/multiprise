@@ -2,11 +2,13 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'n
 import fs from 'node:fs/promises'
 import { request } from 'node:http'
 import { createConnection } from 'node:net'
+import { publish } from './events'
 import { classifyStartupFailure, failureMessage } from './failures'
+import { readLogTail, startLogRun, writeLogLine } from './logfiles'
 import { assertCommandAvailable } from './runtime'
 import { type LogLine, type ProcessStatus } from './types'
 
-const MAX_LOG_LINES = 500
+const MAX_LOG_LINES = 5000
 const EARLY_EXIT_WINDOW_MS = 1200
 const LOOPBACK_HOSTS = ['127.0.0.1', '::1'] as const
 
@@ -33,16 +35,46 @@ function cleanLogLine(line: string) {
   return line.replace(OSC_PATTERN, '').replace(ANSI_PATTERN, '')
 }
 
+let nextLogSeq = 1
+
+function setStatus(id: string, status: ProcessStatus) {
+  statuses.set(id, status)
+  publish({ type: 'status', id, status })
+}
+
+// Consecutive identical lines (health checks, polling requests) collapse into one
+// entry with a counter, so they neither flood the buffer nor silently disappear.
+function pushLogEntry(existing: LogLine[], entry: Omit<LogLine, 'seq'>): { entry: LogLine; replace: boolean } {
+  const last = existing[existing.length - 1]
+  if (last && last.line === entry.line && last.stream === entry.stream) {
+    last.repeat = (last.repeat ?? 1) + 1
+    last.timestamp = entry.timestamp
+    return { entry: last, replace: true }
+  }
+  const added = { ...entry, seq: nextLogSeq++ }
+  existing.push(added)
+  if (existing.length > MAX_LOG_LINES) existing.splice(0, existing.length - MAX_LOG_LINES)
+  return { entry: added, replace: false }
+}
+
+// After a restart, a service's buffer is refilled from the last run written to disk.
+function logsFor(id: string) {
+  let existing = logs.get(id)
+  if (!existing) {
+    existing = []
+    for (const entry of readLogTail(id)) pushLogEntry(existing, entry)
+    logs.set(id, existing)
+  }
+  return existing
+}
+
 export function appendProcessLog(id: string, stream: 'stdout' | 'stderr', line: string) {
   const cleaned = cleanLogLine(line).replace(/\s+$/, '')
   if (cleaned.trim() === '') return
-  const entry: LogLine = { timestamp: new Date().toISOString(), stream, line: cleaned }
-  const existing = logs.get(id) ?? []
-  const last = existing[existing.length - 1]
-  if (last && last.line === cleaned) return
-  existing.push(entry)
-  if (existing.length > MAX_LOG_LINES) existing.splice(0, existing.length - MAX_LOG_LINES)
-  logs.set(id, existing)
+  const timestamp = new Date().toISOString()
+  writeLogLine(id, { timestamp, stream, line: cleaned })
+  const { entry, replace } = pushLogEntry(logsFor(id), { timestamp, stream, line: cleaned })
+  publish({ type: 'log', id, entry: { ...entry }, replace })
 }
 
 function flushBuffer(id: string, stream: 'stdout' | 'stderr', buffer: string) {
@@ -61,14 +93,21 @@ function stoppedStatus(): ProcessStatus {
 }
 
 export function getLogs(id: string, tail?: number): LogLine[] {
-  const entries = logs.get(id) ?? []
+  const entries = logsFor(id)
   if (tail && tail > 0 && entries.length > tail) return entries.slice(entries.length - tail)
   return entries
 }
 
+// Starts a new run: the in-memory buffer empties and the previous run's file is kept on disk.
 export function clearLogs(id: string) {
+  startLogRun(id)
+  logs.set(id, [])
+  publish({ type: 'logs-cleared', id })
+  setStatus(id, stoppedStatus())
+}
+
+export function forgetLogs(id: string) {
   logs.delete(id)
-  statuses.set(id, stoppedStatus())
 }
 
 export function getProcessStatus(id: string): ProcessStatus {
@@ -76,7 +115,7 @@ export function getProcessStatus(id: string): ProcessStatus {
 }
 
 export function markProcessFailed(id: string, error: string, exitCode: number | null = null) {
-  statuses.set(id, {
+  setStatus(id, {
     phase: 'failed',
     running: false,
     ready: false,
@@ -90,7 +129,7 @@ export function markProcessFailed(id: string, error: string, exitCode: number | 
 }
 
 export function markProcessStarting(id: string) {
-  statuses.set(id, {
+  setStatus(id, {
     phase: 'starting',
     running: true,
     ready: false,
@@ -103,7 +142,7 @@ export function markProcessStarting(id: string) {
 }
 
 export function markProcessStopped(id: string) {
-  statuses.set(id, stoppedStatus())
+  setStatus(id, stoppedStatus())
 }
 
 export function trackPreparation(id: string, child: ChildProcess) {
@@ -282,7 +321,7 @@ export async function startProcess(options: {
     failureLocked: false
   }
   processes.set(id, managed)
-  statuses.set(id, {
+  setStatus(id, {
     phase: 'starting',
     running: true,
     ready: false,
@@ -323,7 +362,7 @@ export async function startProcess(options: {
     terminate(managed, 'SIGKILL')
 
     if (managed.stopping) {
-      statuses.set(id, stoppedStatus())
+      setStatus(id, stoppedStatus())
       onExit?.(code ?? null, null)
       return
     }
@@ -331,7 +370,7 @@ export async function startProcess(options: {
 
     const failure = classifyStartupFailure(outputFor(id), `Service exited unexpectedly with code ${code ?? 'unknown'}.`, port)
     const message = failureMessage(failure)
-    statuses.set(id, {
+    setStatus(id, {
       phase: 'failed',
       running: false,
       ready: false,
@@ -347,7 +386,7 @@ export async function startProcess(options: {
   try {
     await waitForReadiness({ port, timeoutMs, hasExited: () => exited, readiness })
     managed.readyAt = new Date().toISOString()
-    statuses.set(id, {
+    setStatus(id, {
       phase: 'ready',
       running: true,
       ready: true,
@@ -360,14 +399,14 @@ export async function startProcess(options: {
     return managed
   } catch (err) {
     if (managed.stopping) {
-      statuses.set(id, stoppedStatus())
+      setStatus(id, stoppedStatus())
       throw new LaunchCancelledError()
     }
     const raw = `${spawnErrorMessage || (err instanceof Error ? err.message : 'Startup failed')}\n${outputFor(id)}`
     const failure = classifyStartupFailure(raw, `Service exited during startup with code ${exitCode ?? 'unknown'}.`, port)
     const message = failureMessage(failure)
     managed.failureLocked = true
-    statuses.set(id, {
+    setStatus(id, {
       phase: 'failed',
       running: false,
       ready: false,
@@ -392,7 +431,7 @@ export async function stopProcess(id: string, timeoutMs = 4000) {
   cancelPreparation(id)
   const managed = processes.get(id)
   if (!managed) {
-    statuses.set(id, stoppedStatus())
+    setStatus(id, stoppedStatus())
     return
   }
   const child = managed.child
@@ -402,7 +441,7 @@ export async function stopProcess(id: string, timeoutMs = 4000) {
   }
   if (child.exitCode !== null || child.signalCode !== null) {
     untrack()
-    statuses.set(id, stoppedStatus())
+    setStatus(id, stoppedStatus())
     return
   }
 
@@ -418,7 +457,7 @@ export async function stopProcess(id: string, timeoutMs = 4000) {
     })
   })
   untrack()
-  statuses.set(id, stoppedStatus())
+  setStatus(id, stoppedStatus())
 }
 
 export async function stopAllProcesses(timeoutMs = 4000) {
