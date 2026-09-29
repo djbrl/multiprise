@@ -7,6 +7,8 @@ import { dataDir } from './store'
 import { type Launches } from './launch'
 import { superviseServices, type Supervisor, type SupervisorOptions } from './supervisor'
 import { watchDockerProjects, type DockerWatcher } from './docker'
+import { startHostnameProxy, type HostnameProxy } from './hostnames'
+import { type HostnameInfo } from './routes/context'
 
 export { subscribe } from './events'
 import { createState, normalizeProjects, type AppState } from './state'
@@ -21,6 +23,9 @@ export type BackendInstance = {
   advertisedIn: string | null
   supervisor: Supervisor
   docker: DockerWatcher
+  // The *.localhost proxy; its port is null when it is off or could not start (see `error`).
+  hostnames: HostnameInfo
+  proxy: HostnameProxy | null
 }
 
 type StartServerOptions = {
@@ -34,6 +39,8 @@ type StartServerOptions = {
   advertise?: boolean
   supervisor?: SupervisorOptions
   dockerIntervalMs?: number
+  // Overrides the proxy_port setting (0 picks a free port); false turns the proxy off.
+  proxyPort?: number | false
 }
 
 const parsePort = (value?: string | null): number | undefined => {
@@ -85,7 +92,8 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
   await normalizeProjects(state)
   const token = options.token || randomBytes(32).toString('hex')
   const launches: Launches = new Map()
-  const app = await createApp(state, { token, allowedOrigins: options.allowedOrigins }, launches)
+  const hostnames: HostnameInfo = { port: null, error: null }
+  const app = await createApp(state, { token, allowedOrigins: options.allowedOrigins }, { launches, hostnames })
   const server = http.createServer(app)
 
   const requestedPort = options.port ?? envPort()
@@ -110,6 +118,19 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
     }
   }
 
+  let proxy: HostnameProxy | null = null
+  const proxyPort = options.proxyPort ?? (state.settings.hostnames ? state.settings.proxy_port : false)
+  if (proxyPort !== false) {
+    try {
+      proxy = await startHostnameProxy(state, proxyPort)
+      hostnames.port = proxy.port
+    } catch (err) {
+      // Services still work on their own ports; only the stable names are unavailable.
+      hostnames.error = `Port ${proxyPort} is not available for service hostnames (${err instanceof Error ? err.message : String(err)}). Choose another proxy_port in the settings.`
+      console.error(`[multiprise] ${hostnames.error}`)
+    }
+  }
+
   return {
     server,
     port,
@@ -117,19 +138,22 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
     token,
     state,
     advertisedIn,
+    hostnames,
+    proxy,
     supervisor: superviseServices(state, launches, options.supervisor),
     docker: watchDockerProjects(state, options.dockerIntervalMs)
   }
 }
 
 export const stopServer = async (backend?: BackendInstance | null): Promise<void> => {
-  // Managed services run in their own process groups, so they must be stopped explicitly.
   // Stopping services must not look like crashes to be restarted.
   backend?.supervisor.stop()
   backend?.docker.stop()
+  await backend?.proxy?.close()
   if (backend?.advertisedIn) {
     await removeDiscoveryFile(backend.advertisedIn).catch(() => {})
   }
+  // Managed services run in their own process groups, so they must be stopped explicitly.
   await stopAllProcesses()
   if (!backend?.server) return
   await new Promise<void>((resolve) => {

@@ -18,6 +18,8 @@ export type Service = {
   running: boolean
   port: number | null
   url: string | null
+  // The stable http://<service>.<project>.localhost name, when the hostname proxy runs.
+  host_url: string | null
   pid: number | null
   command: string | null
   error: string | null
@@ -49,7 +51,7 @@ export const serviceUrl = (port: number) => `http://localhost:${port}`
 
 const rootOf = (view: ProjectView) => view.project.root_path || view.project.path
 
-function toService(view: ProjectView, projectName: string): Service {
+function toService(view: ProjectView, projectName: string, hostUrls: Record<string, string> = {}): Service {
   const { project, status } = view
   // The current or last port; for Docker Compose, the first published port that is not a data store.
   const port = project.port ?? null
@@ -64,6 +66,7 @@ function toService(view: ProjectView, projectName: string): Service {
     running: status.running,
     port,
     url: port && status.running && status.phase === 'ready' ? serviceUrl(port) : null,
+    host_url: hostUrls[project.id] ?? null,
     pid: status.pid ?? null,
     command: project.command ?? null,
     error: status.error ?? project.last_error ?? null
@@ -71,7 +74,11 @@ function toService(view: ProjectView, projectName: string): Service {
 }
 
 export async function listProjects(client: MultipriseClient): Promise<Project[]> {
-  const { projects: views } = await client.request<{ projects: ProjectView[] }>('GET', '/api/projects')
+  const [{ projects: views }, hostUrls] = await Promise.all([
+    client.request<{ projects: ProjectView[] }>('GET', '/api/projects'),
+    // Older app versions have no hostname proxy.
+    client.request<{ urls: Record<string, string> }>('GET', '/api/hostnames').then((result) => result.urls ?? {}, () => ({}))
+  ])
   const byRoot = new Map<string, ProjectView[]>()
   for (const view of views) {
     const root = rootOf(view)
@@ -81,7 +88,7 @@ export async function listProjects(client: MultipriseClient): Promise<Project[]>
   return [...byRoot.entries()]
     .map(([root, items]) => {
       const name = path.basename(root)
-      return { name, path: root, services: items.map((view) => toService(view, name)) }
+      return { name, path: root, services: items.map((view) => toService(view, name, hostUrls)) }
     })
     .sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -233,7 +240,7 @@ async function startProjectServices(client: MultipriseClient, settings: Settings
           env: Object.keys(env).length ? env : undefined,
           role: service.role
         })
-        results.push({ service: toService(view, project.name), outcome: 'started' })
+        results.push({ service: { ...toService(view, project.name), host_url: service.host_url }, outcome: 'started' })
       } catch (err) {
         allStarted = false
         results.push({ service, outcome: 'failed', error: errorMessage(err) })
@@ -281,7 +288,7 @@ export async function stopTargets(client: MultipriseClient, targets: Target[], o
       onProgress?.(`Stopping ${qualifiedName(service)}…`)
       try {
         const view = await client.request<ProjectView>('POST', `/api/projects/${service.id}/stop`, {})
-        results.push({ service: toService(view, target.project.name), outcome: 'stopped' })
+        results.push({ service: { ...toService(view, target.project.name), host_url: service.host_url }, outcome: 'stopped' })
       } catch (err) {
         results.push({ service, outcome: 'failed', error: errorMessage(err) })
       }

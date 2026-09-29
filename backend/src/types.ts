@@ -82,6 +82,9 @@ export type Settings = {
   notifications: boolean
   // Relaunch a service that crashes after it was ready (a few times, with backoff).
   auto_restart: boolean
+  // Serve every service at a stable http://<service>.<project>.localhost:<proxy_port> name.
+  hostnames: boolean
+  proxy_port: number
   port_base: number
   startup_timeout_ms: number
   scan_depth: number

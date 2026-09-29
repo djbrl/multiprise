@@ -7,7 +7,7 @@ import { type ApiContext } from './context'
 
 const MAX_RETAINED_SCANS = 10
 
-export function registerScanRoutes(app: Express, { state, launches, recentListeningPorts }: ApiContext) {
+export function registerScanRoutes(app: Express, { state }: ApiContext) {
   app.post('/api/projects/scan', handle(async (req: Request, res: Response) => {
     const payload = req.body as ScanRequestPayload
     const roots = stringArray(payload?.roots)

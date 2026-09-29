@@ -5,7 +5,7 @@ import { API_TOKEN_HEADER } from './discovery'
 import { apiGuard, type ApiSecurityOptions } from './guard'
 import { HttpError } from './http'
 import { type Launches } from './launch'
-import { type ApiContext } from './routes/context'
+import { type ApiContext, type HostnameInfo } from './routes/context'
 import { registerSystemRoutes } from './routes/system'
 import { registerProjectRoutes } from './routes/projects'
 import { registerServiceRoutes } from './routes/services'
@@ -14,8 +14,13 @@ import { registerPortRoutes } from './routes/ports'
 
 export { API_TOKEN_HEADER, type ApiSecurityOptions }
 
-// `launches` is shared with the supervisor, so its restarts and API launches never overlap.
-export async function createApp(state: AppState, security: ApiSecurityOptions = {}, launches: Launches = new Map()) {
+export type AppOptions = {
+  // Shared with the supervisor, so its restarts and API launches never overlap.
+  launches?: Launches
+  hostnames?: HostnameInfo
+}
+
+export async function createApp(state: AppState, security: ApiSecurityOptions = {}, options: AppOptions = {}) {
   const app = express()
 
   // Every open window refreshes the ports list; they share one lsof run per second.
@@ -27,7 +32,12 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
     return listeningCache.ports
   }
 
-  const context: ApiContext = { state, launches, recentListeningPorts }
+  const context: ApiContext = {
+    state,
+    launches: options.launches ?? new Map(),
+    recentListeningPorts,
+    hostnames: options.hostnames ?? { port: null, error: null }
+  }
 
   app.use(apiGuard(security))
   app.use(express.json({ limit: '2mb' }))

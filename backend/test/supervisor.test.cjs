@@ -13,7 +13,7 @@ const FAST = { healthIntervalMs: 150, probeTimeoutMs: 120, unresponsiveAfter: 2,
 
 async function startApi(context, supervisor = FAST) {
   process.env.MULTIPRISE_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'multiprise-supervisor-data-'))
-  const backend = await startServer({ supervisor })
+  const backend = await startServer({ supervisor, proxyPort: false })
   context.after(() => stopServer(backend))
   const call = async (method, route, body) => {
     const response = await fetch(`${backend.url}${route}`, {

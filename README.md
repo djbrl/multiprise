@@ -55,6 +55,14 @@ Other clients take the usual configuration:
 
 From a source checkout, run the CLI with `npm run cli -- <command>` (names only; it runs from the repository folder), or `npm run build:api && npm link` for a `multiprise` command.
 
+## Stable Hostnames
+
+Every service is also served at a name that never changes, whatever port it holds: `http://<service>.<project>.localhost:7331`, for example `http://web.shop.localhost:7331`. A service named like its project gets the project's name (`http://blog.localhost:7331`), and a project's own name leads to its frontend. Browsers, curl and Node resolve `*.localhost` to this machine without any DNS setup.
+
+The names come from a small reverse proxy inside Multiprise that listens on the loopback addresses only. It passes the original `Host` header through (Vite and Next.js accept `*.localhost`), adds `X-Forwarded-Host`, and tunnels WebSockets, so hot reload keeps working. A stopped service answers with a page explaining how to start it; `http://localhost:7331` lists every name. `multiprise ls`, the MCP tools and the menu bar's **Copy Stable URL** show them.
+
+The port is the `proxy_port` setting, and `hostnames: false` turns the proxy off. If the port is taken when Multiprise starts, the proxy stays off, services keep working on their own ports, and `/api/hostnames` reports why.
+
 ## Why It Exists
 
 A normal multi-project development session quickly turns into terminal management:
@@ -257,6 +265,7 @@ multiprise/
 │   │   ├── processes.ts         # Starting/ready/failed lifecycle and logs
 │   │   ├── supervisor.ts        # Health checks and crash restarts
 │   │   ├── docker.ts            # Docker Compose status and log streaming
+│   │   ├── hostnames.ts         # *.localhost reverse proxy
 │   │   ├── events.ts            # Status, log, and project change events
 │   │   ├── logfiles.ts          # Per-run service log files on disk
 │   │   ├── preparation.ts       # Dependency install and missing-build preparation
@@ -306,7 +315,7 @@ Run the launch-pipeline regression suite with:
 npm run test:backend
 ```
 
-The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. The hostname proxy is tested end to end: naming rules, proxied requests with their headers, WebSocket upgrades, IPv6-only servers, error pages, foreign hosts, and a taken port. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
 
 ## Run From Source
 
@@ -364,7 +373,7 @@ Artifacts are written to `release/`. The current package target is Apple Silicon
 ## Security and Privacy
 
 - Multiprise is local-first; tracked project data is stored on the machine.
-- The orchestration server binds to `127.0.0.1`, not the public network interface.
+- The orchestration server binds to `127.0.0.1`, not the public network interface. The hostname proxy binds to `127.0.0.1` and `::1` only, routes only `*.localhost` names, and refuses other `Host` headers.
 - Every API request must carry a random token generated at launch. It is handed to Multiprise's own window and written to `api.json` in the data folder, readable only by your user account, for the `multiprise` CLI and MCP server; the file is removed when the app quits. Requests from other browser origins or with a non-loopback `Host` header are rejected, so websites you visit cannot drive the local API (including via DNS rebinding).
 - The renderer uses context isolation instead of direct Node.js access, cannot navigate away from the app, and cannot open new windows.
 - Embedded browser pages are sandboxed, limited to HTTP(S), kept in a separate session, and denied permission requests such as launching other apps.

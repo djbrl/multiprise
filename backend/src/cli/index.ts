@@ -99,7 +99,9 @@ function printProjects(projects: Project[]) {
     const width = Math.max(...project.services.map((service) => service.name.length))
     for (const service of project.services) {
       const style = PHASE_STYLE[service.phase] ?? dim
-      const location = service.url ?? (service.phase === 'failed' && service.error ? red(service.error.split('\n')[0]) : '')
+      const location = service.url
+        ? `${service.url}${service.host_url ? `  ${dim(service.host_url)}` : ''}`
+        : service.phase === 'failed' && service.error ? red(service.error.split('\n')[0]) : ''
       console.log(`  ${style(PHASE_ICON[service.phase] ?? '○')} ${service.name.padEnd(width)}  ${dim(service.role.padEnd(8))}  ${style(service.phase.padEnd(8))}  ${location}`.trimEnd())
     }
   }
@@ -112,12 +114,13 @@ function printResults(results: Array<StartResult | StopResult>, json: boolean) {
   }
   for (const result of results) {
     const name = qualifiedName(result.service)
+    const stable = result.service.host_url ? `  ${dim(result.service.host_url)}` : ''
     switch (result.outcome) {
       case 'started':
-        console.log(`${green('●')} ${name}  ${result.service.url ?? 'started'}`)
+        console.log(`${green('●')} ${name}  ${result.service.url ?? 'started'}${stable}`)
         break
       case 'already-running':
-        console.log(`${green('●')} ${name}  ${result.service.url ?? 'running'} ${dim('(already running)')}`)
+        console.log(`${green('●')} ${name}  ${result.service.url ?? 'running'}${stable} ${dim('(already running)')}`)
         break
       case 'stopped':
         console.log(`${dim('○')} ${name}  stopped`)

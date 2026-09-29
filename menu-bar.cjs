@@ -98,6 +98,8 @@ function createMenuBar({ backend, subscribe, showMainWindow, iconPath, commandLi
       notify(`${view.project.name} could not stop`, err instanceof Error ? err.message : String(err), showMainWindow);
     });
 
+  let hostUrls = {};
+
   const serviceItem = (view, group) => {
     const { project, status } = view;
     const port = status.running ? project.port : null;
@@ -108,6 +110,7 @@ function createMenuBar({ backend, subscribe, showMainWindow, iconPath, commandLi
       submenu.push(
         { label: 'Open in Browser', click: () => shell.openExternal(serviceUrl(port)) },
         { label: 'Copy URL', click: () => clipboard.writeText(serviceUrl(port)) },
+        ...(hostUrls[project.id] ? [{ label: 'Copy Stable URL', click: () => clipboard.writeText(hostUrls[project.id]) }] : []),
         { type: 'separator' }
       );
     }
@@ -124,6 +127,7 @@ function createMenuBar({ backend, subscribe, showMainWindow, iconPath, commandLi
     let views = [];
     try {
       views = (await callApi(backend, 'GET', '/api/projects'))?.projects ?? [];
+      hostUrls = (await callApi(backend, 'GET', '/api/hostnames'))?.urls ?? {};
     } catch (err) {
       console.error('[multiprise] menu bar refresh failed:', err);
     }

@@ -7,7 +7,7 @@ import { previousPortIfFree } from '../launch'
 import { handle, stringArray } from '../http'
 import { type ApiContext } from './context'
 
-export function registerPortRoutes(app: Express, { state, launches, recentListeningPorts }: ApiContext) {
+export function registerPortRoutes(app: Express, { state, recentListeningPorts }: ApiContext) {
   app.get('/api/ports/used', handle(async (_req: Request, res: Response) => {
     const listening = await recentListeningPorts()
     const groups = await processGroups(listening.map((entry) => entry.pid))

@@ -42,6 +42,8 @@ const summarize = (service: Service) => ({
   role: service.role,
   status: service.phase,
   url: service.url,
+  // Stable across restarts and port changes; prefer it for links and bookmarks.
+  host_url: service.host_url,
   port: service.port,
   path: service.path,
   ...(service.error && service.phase === 'failed' ? { error: service.error } : {})

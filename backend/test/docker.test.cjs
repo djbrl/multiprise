@@ -70,7 +70,7 @@ esac
 
 async function startApi(context) {
   process.env.MULTIPRISE_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'multiprise-docker-data-'))
-  const backend = await startServer({ dockerIntervalMs: 100 })
+  const backend = await startServer({ dockerIntervalMs: 100, proxyPort: false })
   context.after(() => stopServer(backend))
   const call = async (method, route, body) => {
     const response = await fetch(`${backend.url}${route}`, {

@@ -8,4 +8,8 @@ export type ApiContext = {
   launches: Launches
   // Shared, briefly cached listening-port snapshot for endpoints polled by every window.
   recentListeningPorts: () => ReturnType<typeof listListeningPorts>
+  hostnames: HostnameInfo
 }
+
+// The hostname proxy's state, filled in once it has started (or failed to).
+export type HostnameInfo = { port: number | null; error: string | null }

@@ -32,7 +32,7 @@ async function noServicesMessage(projectPath: string) {
   return 'No runnable package.json, Cargo.toml, or Docker Compose services found'
 }
 
-export function registerProjectRoutes(app: Express, { state, launches, recentListeningPorts }: ApiContext) {
+export function registerProjectRoutes(app: Express, { state, launches }: ApiContext) {
   app.get('/api/projects', (_req: Request, res: Response) => {
     res.json({ projects: state.projects.map(buildProjectView) })
   })

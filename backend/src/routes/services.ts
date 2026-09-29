@@ -49,7 +49,7 @@ async function startupConflictInstance(
   }
 }
 
-export function registerServiceRoutes(app: Express, { state, launches, recentListeningPorts }: ApiContext) {
+export function registerServiceRoutes(app: Express, { state, launches }: ApiContext) {
   app.post('/api/projects/:id/start', handle(async (req: Request, res: Response) => {
     const project = state.projects.find((entry) => entry.id === req.params.id)
     if (!project) {

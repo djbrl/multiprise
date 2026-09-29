@@ -5,9 +5,19 @@ import { persistSettings } from '../state'
 import { sanitizeSettings } from '../store'
 import { checkVSCodeAvailability } from '../commands'
 import { handle } from '../http'
+import { hostUrls } from '../hostnames'
 import { type ApiContext } from './context'
 
-export function registerSystemRoutes(app: Express, { state, launches, recentListeningPorts }: ApiContext) {
+export function registerSystemRoutes(app: Express, { state, hostnames }: ApiContext) {
+  app.get('/api/hostnames', (_req: Request, res: Response) => {
+    res.json({
+      enabled: state.settings.hostnames,
+      port: hostnames.port,
+      error: hostnames.error,
+      urls: hostnames.port ? hostUrls(state.projects, hostnames.port) : {}
+    })
+  })
+
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ ok: true, time: new Date().toISOString() })
   })

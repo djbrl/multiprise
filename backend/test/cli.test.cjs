@@ -18,7 +18,7 @@ const CLI = path.join(__dirname, '..', 'dist', 'cli', 'index.js')
 // Each test gets its own saved projects; the CLI finds the server through this folder.
 async function startAdvertisedServer(context) {
   process.env.MULTIPRISE_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'multiprise-cli-data-'))
-  const backend = await startServer({ advertise: true })
+  const backend = await startServer({ advertise: true, proxyPort: false })
   context.after(() => stopServer(backend))
   return backend
 }
