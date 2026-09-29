@@ -3,7 +3,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { createMenuBar } = require('./menu-bar.cjs');
-const { installCommandLineTool, isCommandLineToolInstalled } = require('./cli-install.cjs');
+const { commandLineToolStatus, installCommandLineTool, isCommandLineToolInstalled } = require('./cli-install.cjs');
 const { hydrateShellPath } = require('./shell-path.cjs');
 let startServer;
 let stopServer;
@@ -711,6 +711,17 @@ app.whenReady().then(async () => {
   ipcMain.handle('clipboard:write', (_event, value) => {
     clipboard.writeText(String(value ?? ''));
     return { ok: true };
+  });
+
+  ipcMain.handle('cli:status', (event) => {
+    if (!isMainWindowSender(event)) throw new Error('Not allowed');
+    return commandLineToolStatus();
+  });
+
+  ipcMain.handle('cli:install', async (event) => {
+    if (!isMainWindowSender(event)) throw new Error('Not allowed');
+    await installCommandLineTool();
+    return commandLineToolStatus();
   });
 
   ipcMain.handle('external:open', async (_event, value) => {

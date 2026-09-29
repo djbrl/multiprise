@@ -255,3 +255,46 @@ export async function startHostnameProxy(state: AppState, port: number): Promise
     }
   }
 }
+
+// Keeps the proxy in line with the hostnames/proxy_port settings, so a change applies
+// without restarting Multiprise. `override` pins the port (0 = any free one) or turns it off.
+export type HostnameController = {
+  port: number | null
+  error: string | null
+  apply: () => Promise<void>
+  close: () => Promise<void>
+}
+
+export function createHostnameController(state: AppState, override?: number | false): HostnameController {
+  let proxy: HostnameProxy | null = null
+  let applied: number | false | undefined
+  const controller: HostnameController = {
+    port: null,
+    error: null,
+    apply: async () => {
+      const wanted = override ?? (state.settings.hostnames ? state.settings.proxy_port : false)
+      if (wanted === applied) return
+      applied = wanted
+      await proxy?.close()
+      proxy = null
+      controller.port = null
+      controller.error = null
+      if (wanted === false) return
+      try {
+        proxy = await startHostnameProxy(state, wanted)
+        controller.port = proxy.port
+      } catch (err) {
+        // Services still work on their own ports; only the stable names are unavailable.
+        controller.error = `Port ${wanted} is not available for service hostnames (${err instanceof Error ? err.message : String(err)}). Choose another port in Settings.`
+        console.error(`[multiprise] ${controller.error}`)
+      }
+    },
+    close: async () => {
+      applied = false
+      await proxy?.close()
+      proxy = null
+      controller.port = null
+    }
+  }
+  return controller
+}

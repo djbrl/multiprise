@@ -74,6 +74,9 @@ type Settings = {
   auto_port: boolean
   auto_install: boolean
   notifications: boolean
+  auto_restart: boolean
+  hostnames: boolean
+  proxy_port: number
   port_base: number
   startup_timeout_ms: number
   scan_depth: number
@@ -488,6 +491,9 @@ const settings = reactive<Settings>({
   auto_port: true,
   auto_install: true,
   notifications: true,
+  auto_restart: true,
+  hostnames: true,
+  proxy_port: 7331,
   port_base: 3000,
   startup_timeout_ms: 20000,
   scan_depth: 8,
@@ -498,6 +504,9 @@ const settingsDraft = reactive<Settings>({
   auto_port: true,
   auto_install: true,
   notifications: true,
+  auto_restart: true,
+  hostnames: true,
+  proxy_port: 7331,
   port_base: 3000,
   startup_timeout_ms: 20000,
   scan_depth: 8,
@@ -2601,6 +2610,15 @@ function applySettingsPatch(patch: Partial<Settings>) {
   if (typeof patch.notifications === 'boolean') {
     settings.notifications = patch.notifications
   }
+  if (typeof patch.auto_restart === 'boolean') {
+    settings.auto_restart = patch.auto_restart
+  }
+  if (typeof patch.hostnames === 'boolean') {
+    settings.hostnames = patch.hostnames
+  }
+  if (typeof patch.proxy_port === 'number' && Number.isFinite(patch.proxy_port)) {
+    settings.proxy_port = Math.min(Math.max(Math.floor(patch.proxy_port), 1024), 65535)
+  }
   if (typeof patch.startup_timeout_ms === 'number' && Number.isFinite(patch.startup_timeout_ms)) {
     settings.startup_timeout_ms = Math.min(Math.max(Math.floor(patch.startup_timeout_ms), 10000), 30000)
   }
@@ -2624,6 +2642,9 @@ function normalizeDraftSettings(draft: Settings) {
     auto_port: !!draft.auto_port,
     auto_install: !!draft.auto_install,
     notifications: !!draft.notifications,
+    auto_restart: !!draft.auto_restart,
+    hostnames: !!draft.hostnames,
+    proxy_port: Math.min(Math.max(Math.floor(draft.proxy_port ?? settings.proxy_port), 1024), 65535),
     startup_timeout_ms: Math.min(Math.max(Math.floor(draft.startup_timeout_ms ?? settings.startup_timeout_ms), 10000), 30000),
     port_base: Math.min(Math.max(Math.floor(draft.port_base ?? settings.port_base), 1), 65535),
     scan_depth: Math.min(Math.max(Math.floor(draft.scan_depth ?? settings.scan_depth), 1), 64),
@@ -2639,6 +2660,9 @@ function syncSettingsDraftFromSettings() {
   settingsDraft.auto_port = settings.auto_port
   settingsDraft.auto_install = settings.auto_install
   settingsDraft.notifications = settings.notifications
+  settingsDraft.auto_restart = settings.auto_restart
+  settingsDraft.hostnames = settings.hostnames
+  settingsDraft.proxy_port = settings.proxy_port
   settingsDraft.startup_timeout_ms = settings.startup_timeout_ms
   settingsDraft.port_base = settings.port_base
   settingsDraft.scan_depth = settings.scan_depth
@@ -2653,6 +2677,9 @@ const settingsDirty = computed(() => {
     draft.auto_port !== settings.auto_port ||
     draft.auto_install !== settings.auto_install ||
     draft.notifications !== settings.notifications ||
+    draft.auto_restart !== settings.auto_restart ||
+    draft.hostnames !== settings.hostnames ||
+    draft.proxy_port !== settings.proxy_port ||
     draft.startup_timeout_ms !== settings.startup_timeout_ms ||
     draft.port_base !== settings.port_base ||
     draft.scan_depth !== settings.scan_depth ||
@@ -2726,6 +2753,7 @@ async function saveSettings() {
     saveSettingsToStorage()
     settingsLoaded.value = true
     setSaveFeedback('saved')
+    await fetchHostnameInfo()
   } catch (err) {
     setSaveFeedback('error')
     return
@@ -2734,8 +2762,59 @@ async function saveSettings() {
   }
 }
 
+// Settings also explains the hostname proxy and the command line tool, with their live state.
+type HostnameInfo = { enabled: boolean; port: number | null; error: string | null }
+const MCP_SETUP_COMMAND = 'claude mcp add multiprise -- multiprise mcp'
+const hostnameInfo = ref<HostnameInfo | null>(null)
+const commandLineTool = ref<CommandLineToolStatus | null>(null)
+const commandLineToolInstalling = ref(false)
+const copiedSnippet = ref('')
+let copiedSnippetTimer: number | undefined
+
+async function fetchHostnameInfo() {
+  try {
+    const response = await apiFetch('/api/hostnames')
+    if (response.ok) hostnameInfo.value = (await response.json()) as HostnameInfo
+  } catch (err) {
+    hostnameInfo.value = null
+  }
+}
+
+async function refreshCommandLineTool() {
+  try {
+    commandLineTool.value = (await window.vibe?.cli?.status()) ?? null
+  } catch (err) {
+    commandLineTool.value = null
+  }
+}
+
+async function installCommandLineTool() {
+  if (!window.vibe?.cli || commandLineToolInstalling.value) return
+  commandLineToolInstalling.value = true
+  try {
+    commandLineTool.value = await window.vibe.cli.install()
+  } finally {
+    commandLineToolInstalling.value = false
+  }
+}
+
+async function copySnippet(text: string) {
+  if (!window.vibe?.copyText) return
+  await window.vibe.copyText(text)
+  copiedSnippet.value = text
+  if (copiedSnippetTimer) window.clearTimeout(copiedSnippetTimer)
+  copiedSnippetTimer = window.setTimeout(() => {
+    copiedSnippet.value = ''
+    copiedSnippetTimer = undefined
+  }, 1600)
+}
+
 watch(activeSection, async (section) => {
-  if (section !== 'settings') syncSettingsDraftFromSettings()
+  if (section !== 'settings') {
+    syncSettingsDraftFromSettings()
+    return
+  }
+  await Promise.all([fetchHostnameInfo(), refreshCommandLineTool()])
 })
 
 // The native browser view always paints above the page, so it is hidden while
@@ -4093,6 +4172,118 @@ onBeforeUnmount(() => {
                           placeholder="node_modules, .git, dist"
                         />
                       </label>
+                    </div>
+                  </section>
+
+                  <section class="rounded-2xl bg-[var(--panel-muted)] p-5">
+                    <div>
+                      <p class="text-[15px] font-semibold text-[var(--text-strong)]">Service supervision</p>
+                      <p class="mt-1 text-xs leading-5 text-[var(--text-subtle)]">What multiprise does when a running service crashes or stops answering.</p>
+                    </div>
+                    <div class="mt-5 flex items-center justify-between gap-4">
+                      <span>
+                        <span class="block text-sm text-[var(--text)]">Restart after a crash</span>
+                        <span class="mt-0.5 block text-xs leading-5 text-[var(--text-subtle)]">A service that exits after it was ready is started again on the same port, after 1, 5 and 15 seconds, at most three times in ten minutes. The crash output stays in its logs; stopping the service cancels a pending restart.</span>
+                      </span>
+                      <div class="flex shrink-0 rounded-lg bg-[var(--panel-bg)] p-1">
+                        <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="settingsDraft.auto_restart ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.auto_restart = true">On</button>
+                        <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="!settingsDraft.auto_restart ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.auto_restart = false">Off</button>
+                      </div>
+                    </div>
+                    <div class="mt-5 border-t border-[var(--border)] pt-4">
+                      <span class="block text-sm text-[var(--text)]">Services that stop answering</span>
+                      <span class="mt-0.5 block text-xs leading-5 text-[var(--text-subtle)]">Every 15 seconds, a ready service has to answer a request (logged by the service as <span class="font-mono">Multiprise health check</span>). After about 30 seconds without an answer it shows as failed with “Not responding”, but keeps running, since it may be paused in a debugger. It turns ready again as soon as it answers.</span>
+                    </div>
+                  </section>
+
+                  <section class="rounded-2xl bg-[var(--panel-muted)] p-5 lg:col-span-2">
+                    <div class="grid gap-5 lg:grid-cols-2 lg:gap-8">
+                      <div>
+                        <p class="text-[15px] font-semibold text-[var(--text-strong)]">Stable hostnames</p>
+                        <p class="mt-1 text-xs leading-5 text-[var(--text-subtle)]">
+                          Reach every service at a name that never changes, whatever port it holds, like
+                          <span class="font-mono text-[var(--text-muted)]">http://web.shop.localhost:{{ settingsDraft.proxy_port }}</span>
+                          for the web service of a shop project. A project's own name, like <span class="font-mono">shop.localhost</span>, leads to its frontend.
+                          Browsers resolve <span class="font-mono">*.localhost</span> to this Mac on their own, and hot reload keeps working.
+                        </p>
+                      </div>
+                      <div>
+                        <div class="flex items-center justify-between gap-4">
+                          <span>
+                            <span class="block text-sm text-[var(--text)]">Serve hostnames</span>
+                            <span class="mt-0.5 block text-xs text-[var(--text-subtle)]">
+                              <template v-if="hostnameInfo?.error">{{ hostnameInfo.error }}</template>
+                              <template v-else-if="hostnameInfo?.port">Running on port {{ hostnameInfo.port }}. <button type="button" class="underline decoration-dotted hover:text-[var(--text)]" @click="openExternal(`http://localhost:${hostnameInfo.port}`)">See every name</button></template>
+                              <template v-else>Off. Services stay reachable on their own ports.</template>
+                            </span>
+                          </span>
+                          <div class="flex shrink-0 rounded-lg bg-[var(--panel-bg)] p-1">
+                          <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="settingsDraft.hostnames ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.hostnames = true">On</button>
+                          <button type="button" class="rounded-md px-3 py-1.5 text-xs transition-colors" :class="!settingsDraft.hostnames ? 'bg-[var(--primary)] text-[var(--primary-text)]' : 'text-[var(--text-muted)] hover:bg-[var(--hover)]'" @click="settingsDraft.hostnames = false">Off</button>
+                        </div>
+                        </div>
+                        <div class="mt-4 flex items-center justify-between gap-4 border-t border-[var(--border)] pt-4" :class="!settingsDraft.hostnames ? 'opacity-45' : ''">
+                          <span>
+                            <span class="block text-sm text-[var(--text)]">Hostname port</span>
+                            <span class="mt-0.5 block text-xs text-[var(--text-subtle)]">The port in every hostname. Changes apply when you save.</span>
+                          </span>
+                          <input
+                            v-model.number="settingsDraft.proxy_port"
+                            type="number"
+                            min="1024"
+                            max="65535"
+                            :disabled="!settingsDraft.hostnames"
+                            :class="[inputBase, '!w-28 shrink-0 text-left text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none']"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="rounded-2xl bg-[var(--panel-muted)] p-5 lg:col-span-2">
+                    <div class="flex flex-wrap items-start justify-between gap-4">
+                      <div class="max-w-2xl">
+                        <p class="text-[15px] font-semibold text-[var(--text-strong)]">Command line and coding agents</p>
+                        <p class="mt-1 text-xs leading-5 text-[var(--text-subtle)]">
+                          The <span class="font-mono">multiprise</span> command drives the services you see here from a terminal, and its MCP server lets coding agents reuse them instead of starting duplicates on random ports. Both talk to this app and open it when needed.
+                        </p>
+                      </div>
+                      <div class="flex shrink-0 items-center gap-3">
+                        <span v-if="commandLineTool?.installed" class="text-xs text-[var(--success-text)]">Installed at {{ commandLineTool.path }}</span>
+                        <button
+                          v-else-if="commandLineTool?.packaged"
+                          type="button"
+                          :class="[btnPanelSecondary, 'h-9 px-4 text-xs']"
+                          :disabled="commandLineToolInstalling"
+                          @click="installCommandLineTool"
+                        >
+                          {{ commandLineToolInstalling ? 'Installing…' : 'Install command line tool' }}
+                        </button>
+                        <span v-else class="text-xs text-[var(--text-subtle)]">From a source checkout: <span class="font-mono">npm run cli -- ls</span></span>
+                      </div>
+                    </div>
+                    <div class="mt-5 grid gap-4 lg:grid-cols-2">
+                      <div>
+                        <p class="text-sm text-[var(--text)]">In a terminal</p>
+                        <div class="mt-2 space-y-1 rounded-xl bg-[var(--panel-bg)] px-4 py-3 font-mono text-xs leading-5 text-[var(--text-muted)]">
+                          <p><span class="text-[var(--text)]">multiprise ls</span> <span class="text-[var(--text-subtle)]"># every service, its status and URL</span></p>
+                          <p><span class="text-[var(--text)]">multiprise up</span> <span class="text-[var(--text-subtle)]"># start the project in this folder</span></p>
+                          <p><span class="text-[var(--text)]">multiprise logs web -f</span> <span class="text-[var(--text-subtle)]"># follow a service's output</span></p>
+                          <p><span class="text-[var(--text)]">multiprise url web</span> <span class="text-[var(--text-subtle)]"># print its URL</span></p>
+                        </div>
+                      </div>
+                      <div>
+                        <p class="text-sm text-[var(--text)]">For coding agents (MCP)</p>
+                        <div class="mt-2 flex items-center justify-between gap-3 rounded-xl bg-[var(--panel-bg)] px-4 py-3">
+                          <span class="min-w-0 truncate font-mono text-xs text-[var(--text)]">{{ MCP_SETUP_COMMAND }}</span>
+                          <button type="button" class="shrink-0 text-xs text-[var(--text-muted)] hover:text-[var(--text)]" @click="copySnippet(MCP_SETUP_COMMAND)">
+                            {{ copiedSnippet === MCP_SETUP_COMMAND ? 'Copied' : 'Copy' }}
+                          </button>
+                        </div>
+                        <p class="mt-2 text-xs leading-5 text-[var(--text-subtle)]">
+                          That registers it with Claude Code; other clients run <span class="font-mono">multiprise mcp</span>. Agents get <span class="font-mono">list_services</span>, <span class="font-mono">start_service</span>, <span class="font-mono">stop_service</span>, <span class="font-mono">restart_service</span>, <span class="font-mono">tail_logs</span> and <span class="font-mono">get_url</span>.
+                        </p>
+                      </div>
                     </div>
                   </section>
                 </div>

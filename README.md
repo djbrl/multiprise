@@ -61,7 +61,7 @@ Every service is also served at a name that never changes, whatever port it hold
 
 The names come from a small reverse proxy inside Multiprise that listens on the loopback addresses only. It passes the original `Host` header through (Vite and Next.js accept `*.localhost`), adds `X-Forwarded-Host`, and tunnels WebSockets, so hot reload keeps working. A stopped service answers with a page explaining how to start it; `http://localhost:7331` lists every name. `multiprise ls`, the MCP tools and the menu bar's **Copy Stable URL** show them.
 
-The port is the `proxy_port` setting, and `hostnames: false` turns the proxy off. If the port is taken when Multiprise starts, the proxy stays off, services keep working on their own ports, and `/api/hostnames` reports why.
+Both are in **Settings → Stable hostnames** (the `proxy_port` and `hostnames` settings), and changes apply as soon as they are saved. If the port is taken when Multiprise starts, the proxy stays off, services keep working on their own ports, and `/api/hostnames` reports why.
 
 ## Why It Exists
 
@@ -245,7 +245,7 @@ When a user launches a project, Multiprise performs this sequence:
 
 Once a service is ready, Multiprise keeps watching it:
 
-- **Crashes are restarted.** A service that exits after it was ready is relaunched on the same port with the same command and environment, after 1 s, 5 s and 15 s, at most three times in ten minutes. The crash output stays in the log above the restart. Stopping the service cancels a pending restart; the `auto_restart` setting turns this off.
+- **Crashes are restarted.** A service that exits after it was ready is relaunched on the same port with the same command and environment, after 1 s, 5 s and 15 s, at most three times in ten minutes. The crash output stays in the log above the restart. Stopping the service cancels a pending restart; **Settings → Service supervision** turns this off.
 - **Hangs are flagged, not killed.** Every 15 seconds a service that has answered HTTP must answer a request again (the probes identify themselves as `Multiprise health check`); services that never spoke HTTP only have to keep accepting connections. After two missed probes the service shows as failed with a "Not responding" message but keeps running, since it may be paused in a debugger, and it turns ready again as soon as it answers.
 
 ## Project Structure

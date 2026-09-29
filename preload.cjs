@@ -5,6 +5,10 @@ contextBridge.exposeInMainWorld('vibe', {
   backendHealth: () => ipcRenderer.invoke('backend:health'),
   openExternal: (url) => ipcRenderer.invoke('external:open', url),
   copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
+  cli: {
+    status: () => ipcRenderer.invoke('cli:status'),
+    install: () => ipcRenderer.invoke('cli:install')
+  },
   browser: {
     open: (url, options) => ipcRenderer.invoke('browser:open', url, options),
     getState: () => ipcRenderer.invoke('browser:state'),

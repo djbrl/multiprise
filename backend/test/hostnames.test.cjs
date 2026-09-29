@@ -164,3 +164,39 @@ test('a proxy port that is already taken leaves the app running without hostname
   assert.deepEqual(info.urls, {})
   assert.equal((await api.call('GET', '/api/projects')).status, 200)
 })
+
+test('turning hostnames on or off, or changing their port, applies without a restart', async (context) => {
+  // Start with hostnames off, so the test never binds the real default port.
+  process.env.MULTIPRISE_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'multiprise-hostnames-data-'))
+  await fs.writeFile(path.join(process.env.MULTIPRISE_DATA_DIR, 'settings.json'), JSON.stringify({ hostnames: false }))
+  const backend = await startServer({})
+  context.after(() => stopServer(backend))
+  const call = async (method, route, body) => (await fetch(`${backend.url}${route}`, {
+    method,
+    headers: { 'x-multiprise-token': backend.token, 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  })).json()
+  const freePort = () => new Promise((resolve) => {
+    const probe = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port } = probe.address()
+      probe.close(() => resolve(port))
+    })
+  })
+  const answers = (port) => request(port, 'localhost').then((response) => response.status === 200, () => false)
+
+  assert.equal((await call('GET', '/api/hostnames')).port, null)
+  const first = await freePort()
+  await call('PATCH', '/api/settings', { hostnames: true, proxy_port: first })
+  assert.equal((await call('GET', '/api/hostnames')).port, first)
+  assert.equal(await answers(first), true)
+
+  const second = await freePort()
+  await call('PATCH', '/api/settings', { proxy_port: second })
+  assert.equal((await call('GET', '/api/hostnames')).port, second)
+  assert.equal(await answers(first), false)
+  assert.equal(await answers(second), true)
+
+  await call('PATCH', '/api/settings', { hostnames: false })
+  assert.equal((await call('GET', '/api/hostnames')).port, null)
+  assert.equal(await answers(second), false)
+})

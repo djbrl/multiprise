@@ -20,6 +20,8 @@ const currentLink = () => {
 
 const isCommandLineToolInstalled = () => app.isPackaged && currentLink() === bundledCliPath();
 
+const commandLineToolStatus = () => ({ installed: isCommandLineToolInstalled(), packaged: app.isPackaged, path: INSTALL_PATH });
+
 const linkWithAdminRights = (source, target) =>
   new Promise((resolve, reject) => {
     // Paths travel as arguments, never inside the script text.
@@ -91,4 +93,4 @@ async function installCommandLineTool() {
   if (response === 1) clipboard.writeText(MCP_SETUP);
 }
 
-module.exports = { installCommandLineTool, isCommandLineToolInstalled };
+module.exports = { commandLineToolStatus, installCommandLineTool, isCommandLineToolInstalled };

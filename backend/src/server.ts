@@ -5,7 +5,8 @@ import { API_TOKEN_HEADER } from './discovery'
 import { apiGuard, type ApiSecurityOptions } from './guard'
 import { HttpError } from './http'
 import { type Launches } from './launch'
-import { type ApiContext, type HostnameInfo } from './routes/context'
+import { type ApiContext } from './routes/context'
+import { type HostnameController } from './hostnames'
 import { registerSystemRoutes } from './routes/system'
 import { registerProjectRoutes } from './routes/projects'
 import { registerServiceRoutes } from './routes/services'
@@ -17,7 +18,7 @@ export { API_TOKEN_HEADER, type ApiSecurityOptions }
 export type AppOptions = {
   // Shared with the supervisor, so its restarts and API launches never overlap.
   launches?: Launches
-  hostnames?: HostnameInfo
+  hostnames?: HostnameController
 }
 
 export async function createApp(state: AppState, security: ApiSecurityOptions = {}, options: AppOptions = {}) {
@@ -36,7 +37,7 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
     state,
     launches: options.launches ?? new Map(),
     recentListeningPorts,
-    hostnames: options.hostnames ?? { port: null, error: null }
+    hostnames: options.hostnames
   }
 
   app.use(apiGuard(security))

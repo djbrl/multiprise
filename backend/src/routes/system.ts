@@ -10,11 +10,12 @@ import { type ApiContext } from './context'
 
 export function registerSystemRoutes(app: Express, { state, hostnames }: ApiContext) {
   app.get('/api/hostnames', (_req: Request, res: Response) => {
+    const port = hostnames?.port ?? null
     res.json({
       enabled: state.settings.hostnames,
-      port: hostnames.port,
-      error: hostnames.error,
-      urls: hostnames.port ? hostUrls(state.projects, hostnames.port) : {}
+      port,
+      error: hostnames?.error ?? null,
+      urls: port ? hostUrls(state.projects, port) : {}
     })
   })
 
@@ -67,6 +68,8 @@ export function registerSystemRoutes(app: Express, { state, hostnames }: ApiCont
   app.patch('/api/settings', handle(async (req: Request, res: Response) => {
     state.settings = sanitizeSettings(req.body, state.settings)
     await persistSettings(state)
+    // Turning hostnames on or off, or moving the proxy, takes effect right away.
+    await hostnames?.apply()
     res.json(state.settings)
   }))
 }
