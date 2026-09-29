@@ -25,6 +25,36 @@ The name comes from the French word for a power strip: one place where many proj
 
 After that first approval, Multiprise opens normally. Your tracked projects and settings live in `~/Library/Application Support/Multiprise/data/`.
 
+## Command Line and MCP Server
+
+Multiprise also works from a terminal and from coding agents. Choose **Install Command Line Tool…** in the menu bar menu to link `multiprise` into `/usr/local/bin`. It runs on the Node runtime built into the app, so Node.js does not need to be installed.
+
+```bash
+multiprise ls                  # every project and service, with status and URL
+multiprise up                  # start the project containing this folder, backend first
+multiprise up shop/api         # or name a project, a service, project/service, or a folder
+multiprise logs web -f         # follow a service's output
+multiprise url web             # print its URL, e.g. open "$(multiprise url web)"
+multiprise restart api
+multiprise down
+```
+
+`up` and `restart` wait until each service accepts connections, give it the same port it had last time when that port is free, and hand `BACKEND_PORT`/`FRONTEND_PORT` to its siblings, exactly like the app's buttons. `ls`, `up`, `down`, `restart` and `url` accept `--json`. The CLI talks to the running app and opens it if needed.
+
+`multiprise mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so coding agents reuse the services you already run instead of starting duplicates on random ports. It provides `list_services`, `start_service`, `stop_service`, `restart_service`, `tail_logs` and `get_url`. For Claude Code:
+
+```bash
+claude mcp add multiprise -- multiprise mcp
+```
+
+Other clients take the usual configuration:
+
+```json
+{ "mcpServers": { "multiprise": { "command": "multiprise", "args": ["mcp"] } } }
+```
+
+From a source checkout, run the CLI with `npm run cli -- <command>` (names only; it runs from the repository folder), or `npm run build:api && npm link` for a `multiprise` command.
+
 ## Why It Exists
 
 A normal multi-project development session quickly turns into terminal management:
@@ -223,6 +253,8 @@ multiprise/
 │   │   ├── failures.ts          # Actionable startup error classification
 │   │   ├── ports.ts             # Port inspection and allocation
 │   │   ├── store.ts             # Persistent project/settings storage
+│   │   ├── discovery.ts         # Advertises the running API to the CLI (api.json)
+│   │   ├── cli/                 # `multiprise` CLI and MCP server
 │   └── tsconfig.json
 ├── renderer/
 │   ├── src/App.vue              # Main Vue application
@@ -234,6 +266,8 @@ multiprise/
 ├── scripts/dev.mjs              # Portable development launcher
 ├── main.cjs                     # Electron main process
 ├── menu-bar.cjs                 # Menu bar icon and service notifications
+├── cli-install.cjs              # "Install Command Line Tool…" (links bin/multiprise)
+├── bin/multiprise               # CLI launcher shipped inside the app bundle
 ├── preload.cjs                  # Context-isolated renderer bridge
 ├── port-ranges.json             # Automatic allocation ranges
 ├── PROJECT_DISCOVERY.md         # Manifest discovery rules
@@ -262,7 +296,7 @@ Run the launch-pipeline regression suite with:
 npm run test:backend
 ```
 
-The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
 
 ## Run From Source
 
@@ -321,7 +355,7 @@ Artifacts are written to `release/`. The current package target is Apple Silicon
 
 - Multiprise is local-first; tracked project data is stored on the machine.
 - The orchestration server binds to `127.0.0.1`, not the public network interface.
-- Every API request must carry a random token generated at launch and handed only to Multiprise's own window. Requests from other browser origins or with a non-loopback `Host` header are rejected, so websites you visit cannot drive the local API (including via DNS rebinding).
+- Every API request must carry a random token generated at launch. It is handed to Multiprise's own window and written to `api.json` in the data folder, readable only by your user account, for the `multiprise` CLI and MCP server; the file is removed when the app quits. Requests from other browser origins or with a non-loopback `Host` header are rejected, so websites you visit cannot drive the local API (including via DNS rebinding).
 - The renderer uses context isolation instead of direct Node.js access, cannot navigate away from the app, and cannot open new windows.
 - Embedded browser pages are sandboxed, limited to HTTP(S), kept in a separate session, and denied permission requests such as launching other apps.
 - Only one Multiprise instance runs at a time, and project state is written atomically; a file that cannot be parsed is set aside as `projects.json.corrupt-<timestamp>` instead of being overwritten.

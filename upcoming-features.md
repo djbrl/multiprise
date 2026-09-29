@@ -12,8 +12,8 @@ Ordered by priority within each section. Check items off as they land.
 
 ## Next
 
-- [ ] **CLI** — `multiprise up`, `multiprise logs <service> -f`, `multiprise url <service>` over the existing local API.
-- [ ] **MCP server** — `list_services`, `start`, `stop`, `tail_logs`, `get_url`, so coding agents reuse running services instead of spawning their own.
+- [x] **CLI** — `multiprise up`, `multiprise logs <service> -f`, `multiprise url <service>` over the existing local API.
+- [x] **MCP server** — `list_services`, `start`, `stop`, `tail_logs`, `get_url`, so coding agents reuse running services instead of spawning their own.
 - [ ] **Stable `*.localhost` hostnames** — a local reverse proxy mapping `api.project.localhost` to whatever port the service holds.
 - [ ] **Service health after startup** — periodic liveness checks so a hung server stops showing as ready.
 - [ ] **Crash detection with bounded auto-restart** — backoff, capped attempts.

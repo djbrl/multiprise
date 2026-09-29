@@ -4,10 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "main": "main.cjs",
+  "bin": {
+    "multiprise": "backend/dist/cli/index.js"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "generate:icons": "electron scripts/generate-icons.cjs",
     "dev:api": "tsx backend/src/dev.ts",
+    "cli": "tsx backend/src/cli/index.ts",
     "dev:web": "npm run dev:renderer",
     "dev:renderer": "vite --config renderer/vite.config.js",
     "dev:electron": "electron .",
@@ -50,6 +54,7 @@
     "files": [
       "main.cjs",
       "menu-bar.cjs",
+      "cli-install.cjs",
       "preload.cjs",
       "shell-path.cjs",
       "package.json",
@@ -60,6 +65,12 @@
       "renderer/dist/**/*",
       "backend/dist/**/*",
       "backend/package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin/multiprise",
+        "to": "bin/multiprise"
+      }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

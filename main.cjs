@@ -3,6 +3,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { createMenuBar } = require('./menu-bar.cjs');
+const { installCommandLineTool, isCommandLineToolInstalled } = require('./cli-install.cjs');
 const { hydrateShellPath } = require('./shell-path.cjs');
 let startServer;
 let stopServer;
@@ -677,7 +678,7 @@ app.whenReady().then(async () => {
     }
     const backendPort = app.isPackaged ? 0 : undefined;
     ({ startServer, stopServer, subscribe: subscribeToBackend } = loadBackendModule());
-    backend = await startServer({ port: backendPort, allowedOrigins: rendererOrigins() });
+    backend = await startServer({ port: backendPort, allowedOrigins: rendererOrigins(), advertise: true });
   } catch (err) {
     closeSplashWindow();
     dialog.showErrorBox(
@@ -727,7 +728,8 @@ app.whenReady().then(async () => {
     backend,
     subscribe: subscribeToBackend,
     showMainWindow,
-    iconPath: path.join(__dirname, 'build', 'trayTemplate.png')
+    iconPath: path.join(__dirname, 'build', 'trayTemplate.png'),
+    commandLineTool: { install: installCommandLineTool, isInstalled: isCommandLineToolInstalled }
   });
 
   app.on('activate', () => {

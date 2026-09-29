@@ -14,7 +14,8 @@ const main = async () => {
   const backend = await startServer({
     port: preferredPort,
     strictPort: Boolean(explicitPortValue),
-    token: process.env.MULTIPRISE_API_TOKEN
+    token: process.env.MULTIPRISE_API_TOKEN,
+    advertise: true
   })
 
   console.log(`Multiprise backend listening on ${backend.url}`)

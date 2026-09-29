@@ -1,0 +1,13 @@
+#!/bin/sh
+# Runs the Multiprise CLI with the Node runtime built into the app, so Node need not be installed.
+# Installed as a symlink (e.g. /usr/local/bin/multiprise) to Multiprise.app/Contents/Resources/bin/multiprise.
+self="$0"
+while [ -L "$self" ]; do
+  target="$(readlink "$self")"
+  case "$target" in
+    /*) self="$target" ;;
+    *) self="$(dirname "$self")/$target" ;;
+  esac
+done
+contents="$(cd "$(dirname "$self")/../.." && pwd)"
+ELECTRON_RUN_AS_NODE=1 exec "$contents/MacOS/Multiprise" "$contents/Resources/app.asar/backend/dist/cli/index.js" "$@"

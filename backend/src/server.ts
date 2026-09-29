@@ -43,6 +43,8 @@ import { prepareService } from './preparation'
 import { subscribe } from './events'
 import { deleteLogFiles } from './logfiles'
 import { detectStartupConflict } from './failures'
+import { API_TOKEN_HEADER } from './discovery'
+import { projectRoleFallback } from './roles'
 import { persistProjects, persistSettings } from './state'
 import { sanitizeSettings } from './store'
 import { assertCommandAvailable, resolveProjectNodeRuntime } from './runtime'
@@ -212,15 +214,6 @@ async function noServicesMessage(projectPath: string) {
     }
   }
   return 'No runnable package.json, Cargo.toml, or Docker Compose services found'
-}
-
-function projectRoleFallback(project: Project): 'backend' | 'frontend' | 'service' {
-  if (project.role) return project.role
-  const root = project.root_path ?? project.path
-  const segments = path.relative(root, project.path).toLowerCase().split(/[\\/]/)
-  if (segments.some((segment) => ['frontend', 'client', 'web', 'ui', 'app'].includes(segment))) return 'frontend'
-  if (segments.some((segment) => ['backend', 'server', 'api'].includes(segment))) return 'backend'
-  return 'service'
 }
 
 const SERVICE_ROLES = new Set(['backend', 'frontend', 'service'])
@@ -530,7 +523,7 @@ export type ApiSecurityOptions = {
   allowedOrigins?: string[]
 }
 
-export const API_TOKEN_HEADER = 'x-multiprise-token'
+export { API_TOKEN_HEADER }
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
 class HttpError extends Error {

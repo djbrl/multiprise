@@ -2,6 +2,8 @@ import http from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { createApp } from './server'
 import { stopAllProcesses } from './processes'
+import { removeDiscoveryFile, writeDiscoveryFile } from './discovery'
+import { dataDir } from './store'
 
 export { subscribe } from './events'
 import { createState, normalizeProjects, type AppState } from './state'
@@ -12,6 +14,8 @@ export type BackendInstance = {
   url: string | null
   token: string
   state: AppState
+  // The data directory whose discovery file advertises this server, if any.
+  advertisedIn: string | null
 }
 
 type StartServerOptions = {
@@ -21,6 +25,8 @@ type StartServerOptions = {
   token?: string
   // Browser origins allowed to call the API (the renderer's origin; "null" for file://).
   allowedOrigins?: string[]
+  // Write the URL and token where the CLI and MCP server look for a running app.
+  advertise?: boolean
 }
 
 const parsePort = (value?: string | null): number | undefined => {
@@ -85,17 +91,32 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
   const port = address && typeof address === 'object' ? address.port : null
   const url = port ? `http://127.0.0.1:${port}` : null
 
+  let advertisedIn: string | null = null
+  if (options.advertise && url) {
+    try {
+      await writeDiscoveryFile(dataDir(), { url, token, pid: process.pid })
+      advertisedIn = dataDir()
+    } catch (err) {
+      // The app works without it; only the CLI and MCP server cannot find it.
+      console.error('[multiprise] failed to advertise the API:', err)
+    }
+  }
+
   return {
     server,
     port,
     url,
     token,
-    state
+    state,
+    advertisedIn
   }
 }
 
 export const stopServer = async (backend?: BackendInstance | null): Promise<void> => {
   // Managed services run in their own process groups, so they must be stopped explicitly.
+  if (backend?.advertisedIn) {
+    await removeDiscoveryFile(backend.advertisedIn).catch(() => {})
+  }
   await stopAllProcesses()
   if (!backend?.server) return
   await new Promise<void>((resolve) => {

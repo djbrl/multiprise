@@ -63,7 +63,7 @@ const notify = (title, body, onClick) => {
   notification.show();
 };
 
-function createMenuBar({ backend, subscribe, showMainWindow, iconPath }) {
+function createMenuBar({ backend, subscribe, showMainWindow, iconPath, commandLineTool }) {
   const icon = nativeImage.createFromPath(iconPath);
   icon.setTemplateImage(true);
   const tray = new Tray(icon);
@@ -144,6 +144,9 @@ function createMenuBar({ backend, subscribe, showMainWindow, iconPath }) {
     template.push(
       { label: 'Stop All Services', enabled: managed.length > 0, click: () => Promise.all(managed.map(stopService)) },
       { label: 'Open Multiprise', click: showMainWindow },
+      ...(commandLineTool.isInstalled()
+        ? []
+        : [{ label: 'Install Command Line Tool…', click: () => commandLineTool.install().finally(scheduleRebuild) }]),
       { type: 'separator' },
       { label: 'Quit Multiprise', click: () => app.quit() }
     );
