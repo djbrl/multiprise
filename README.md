@@ -229,6 +229,7 @@ multiprise/
 │   ├── src/style.css            # Tailwind layers and theme tokens
 │   └── vite.config.js
 ├── backend/test/                # Fixture-driven reliability regressions
+├── brand/                       # Logo and icon sources; see brand/README.md
 ├── .github/workflows/ci.yml     # Build and reliability checks
 ├── scripts/dev.mjs              # Portable development launcher
 ├── main.cjs                     # Electron main process
