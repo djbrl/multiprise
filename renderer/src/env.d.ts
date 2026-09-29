@@ -38,6 +38,7 @@ declare global {
       backendHealth?: () => Promise<{ ok: boolean; url: string | null; port: number | null; token?: string | null; time: string }>
       openExternal?: (url: string) => Promise<void>
       copyText?: (text: string) => Promise<{ ok: boolean }>
+      pathForFile?: (file: File) => string
       cli?: {
         status: () => Promise<CommandLineToolStatus>
         install: () => Promise<CommandLineToolStatus>

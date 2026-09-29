@@ -2,6 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import multipriseIconUrl from './assets/multiprise-icon.svg'
 import ServiceConfigDialog from './components/ServiceConfigDialog.vue'
+import LogViewer, { type LogEntry } from './components/LogViewer.vue'
+import ServiceFailure, { type FailureAction } from './components/ServiceFailure.vue'
+import CommandPalette, { type PaletteCommand } from './components/CommandPalette.vue'
 import {
   panelClass,
   panelProjectClass,
@@ -76,6 +79,7 @@ type ProcessStatus = {
   ready_at?: string | null
   error?: string | null
   exit_code?: number | null
+  failure_code?: string | null
 }
 
 type ProjectView = {
@@ -387,11 +391,7 @@ const detected = reactive<Record<string, DetectResponse>>({})
 const logs = reactive<Record<string, LogLine[]>>({})
 const actionState = reactive<Record<string, { command: string; port: string }>>({})
 const actionCommandDirty = reactive<Record<string, boolean>>({})
-const logFilter = ref('')
-const logRoleFilter = ref<'all' | 'backend' | 'frontend'>('all')
-const logLevelFilter = ref<'all' | 'errors' | 'warnings'>('all')
-const logsScrollRef = ref<HTMLElement | null>(null)
-const logsPinnedToBottom = ref(true)
+const logViewerRef = ref<InstanceType<typeof LogViewer> | null>(null)
 const actionDetailsOpen = reactive<Record<string, boolean>>({})
 const actionErrors = reactive<Record<string, string>>({})
 const actionErrorTimers: Record<string, number> = {}
@@ -1394,162 +1394,53 @@ const primaryBrowserTarget = computed(() => {
   if (candidates.length === 0) return null
   return candidates.find((item) => isFrontendService(item)) ?? candidates[0]
 })
-const selectedLogLines = computed(() => {
+// Every line of the selected project's services, oldest first; LogViewer filters them.
+const projectLogEntries = computed<LogEntry[]>(() => {
   if (!selectedGroup.value) return []
   const entries = selectedGroup.value.items.flatMap((item) => {
     const serviceName = projectTitle(item)
-    return (logs[item.project.id] ?? []).map((entry) => ({
-      ...entry,
-      serviceName,
-      role: serviceRole(item),
-    }))
+    const role = serviceRole(item)
+    return (logs[item.project.id] ?? []).map((entry) => ({ ...entry, serviceId: item.project.id, serviceName, role }))
   })
-  entries.sort((a, b) => {
-    const timeA = new Date(a.timestamp).getTime()
-    const timeB = new Date(b.timestamp).getTime()
-    return timeA - timeB
-  })
-  const roleFilter = logRoleFilter.value
-  const roleFiltered =
-    roleFilter === 'all' ? entries : entries.filter((entry) => entry.role === roleFilter)
-  const levelFilter = logLevelFilter.value
-  const levelFiltered =
-    levelFilter === 'all'
-      ? roleFiltered
-      : roleFiltered.filter((entry) => logEntryLevel(entry) === levelFilter)
-  const query = logFilter.value.trim().toLowerCase()
-  const filtered = query
-    ? levelFiltered.filter(
-        (entry) =>
-          entry.line.toLowerCase().includes(query) ||
-          entry.serviceName.toLowerCase().includes(query)
-      )
-    : levelFiltered
-  return filtered.slice(-500)
+  return entries.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime() || a.seq - b.seq)
 })
+const projectLogServices = computed(() =>
+  (selectedGroup.value?.items ?? []).map((item) => ({ id: item.project.id, name: projectTitle(item), role: serviceRole(item) }))
+)
+
+// Links in log lines: local URLs open in the in-app browser, source locations in the editor.
+async function openLogUrl(url: string) {
+  try {
+    const local = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|[\w.-]+\.localhost)(:\d+)?(\/|$)/i.test(url)
+    if (local && window.vibe?.browser) {
+      activeSection.value = 'projects'
+      projectPanelMode.value = 'browser'
+      applyBrowserState(await window.vibe.browser.open(url, { title: url }))
+      await nextTick()
+      observeBrowserViewport()
+    } else {
+      await openExternal(url)
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Unable to open the link'
+  }
+}
+
+async function openLogFile(target: { serviceId: string; path: string; line?: number; column?: number }) {
+  try {
+    const response = await apiFetch(`/api/projects/${target.serviceId}/open-file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: target.path, line: target.line, column: target.column })
+    })
+    if (!response.ok) await throwResponseError(response, 'Unable to open the file')
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Unable to open the file'
+  }
+}
+
 function servicePid(service: ProjectView) {
   return service.status.pid ?? (processInstances[service.project.id] ?? []).find((instance) => instance.pid)?.pid ?? null
-}
-
-function formatTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
-function logServiceTone(entry: { role?: string }) {
-  switch (entry.role) {
-    case 'backend':
-      return 'text-[var(--log-backend)]'
-    case 'frontend':
-      return 'text-[var(--log-frontend)]'
-    case 'service':
-      return 'text-[var(--log-service)]'
-    default:
-      return 'text-[var(--log-default)]'
-  }
-}
-
-function logEntryLevel(entry: { stream?: string; line?: string }) {
-  const line = entry.line ?? ''
-  // Many tools log progress and warnings to stderr, so the stream alone doesn't make a line an error.
-  if (/\b(warn|warning|deprecated|deprecation)\b/i.test(line)) {
-    return 'warnings'
-  }
-  if (/\b(error|err!|failed|failure|exception|fatal|panic|eaddrinuse|exited|unable to|cannot)\b/i.test(line)) {
-    return 'errors'
-  }
-  if (entry.stream === 'stderr' && /^\s+at\s/.test(line)) {
-    return 'errors'
-  }
-  return 'all'
-}
-
-function logLineTone(entry: { stream?: string; line?: string }) {
-  const line = entry.line ?? ''
-  if (/^\s+at\s/.test(line) && entry.stream === 'stderr') {
-    return 'text-[var(--text-muted)]'
-  }
-  if (logEntryLevel(entry) === 'errors') {
-    return 'text-[var(--log-error)]'
-  }
-  if (logEntryLevel(entry) === 'warnings') {
-    return 'text-[var(--log-warning)]'
-  }
-  if (/\b(ready|started|listening|compiled|build finished|success|connected)\b/i.test(line)) {
-    return 'text-[var(--log-success)]'
-  }
-  return 'text-[var(--log-default)]'
-}
-
-function logRowTone(entry: { stream?: string; line?: string }) {
-  if (logEntryLevel(entry) === 'errors') {
-    return 'border-l-[var(--log-error)] bg-[color-mix(in_srgb,var(--danger-bg)_35%,transparent)]'
-  }
-  if (logEntryLevel(entry) === 'warnings') {
-    return 'border-l-[var(--log-warning)]'
-  }
-  return 'border-l-transparent'
-}
-
-function scrollLogsToBottom(force = false) {
-  nextTick(() => {
-    const container = logsScrollRef.value
-    if (!container) return
-    if (!force && !logsPinnedToBottom.value) return
-    container.scrollTop = container.scrollHeight
-    logsPinnedToBottom.value = true
-  })
-}
-
-function handleLogsScroll() {
-  const container = logsScrollRef.value
-  if (!container) return
-  const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-  logsPinnedToBottom.value = distanceFromBottom < 28
-}
-
-function jumpToLatest() {
-  logsPinnedToBottom.value = true
-  scrollLogsToBottom(true)
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function highlightText(value: string, query: string) {
-  const trimmed = query.trim()
-  if (!trimmed) {
-    return escapeHtml(value)
-  }
-  const lowerValue = value.toLowerCase()
-  const lowerQuery = trimmed.toLowerCase()
-  if (!lowerValue.includes(lowerQuery)) {
-    return escapeHtml(value)
-  }
-  let result = ''
-  let index = 0
-  while (index < value.length) {
-    const matchIndex = lowerValue.indexOf(lowerQuery, index)
-    if (matchIndex === -1) {
-      result += escapeHtml(value.slice(index))
-      break
-    }
-    result += escapeHtml(value.slice(index, matchIndex))
-    result += `<mark class="rounded bg-[var(--highlight-bg)] px-1 text-[var(--highlight-text)]">${escapeHtml(
-      value.slice(matchIndex, matchIndex + trimmed.length)
-    )}</mark>`
-    index = matchIndex + trimmed.length
-  }
-  return result
 }
 
 async function throwResponseError(response: Response, fallback: string) {
@@ -1690,6 +1581,41 @@ async function pickFolders() {
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Unknown error'
   }
+}
+
+// Folders dropped anywhere on the window open Add Projects with their services previewed.
+const dragDepth = ref(0)
+const draggingFiles = computed(() => dragDepth.value > 0)
+const carriesFiles = (event: DragEvent) => !!event.dataTransfer?.types.includes('Files')
+
+function handleDragEnter(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  event.preventDefault()
+  dragDepth.value += 1
+}
+
+function handleDragOver(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+}
+
+function handleDragLeave(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+}
+
+async function handleDrop(event: DragEvent) {
+  if (!carriesFiles(event)) return
+  event.preventDefault()
+  dragDepth.value = 0
+  const paths = [...(event.dataTransfer?.files ?? [])]
+    .map((file) => window.vibe?.pathForFile?.(file) ?? '')
+    .filter(Boolean)
+  if (!paths.length) return
+  selectedFolders.value = Array.from(new Set([...selectedFolders.value, ...paths]))
+  if (pickerOpen.value) await refreshProjectPreviews()
+  else await openPicker()
 }
 
 function removeSelectedFolder(path: string) {
@@ -2066,6 +1992,38 @@ async function startProject(project: ProjectView, options: {
     return false
   } finally {
     setActionLoading('start', project.project.id, false)
+  }
+}
+
+// The fixes offered next to a failed service's error.
+const failureActionBusy = reactive<Record<string, FailureAction | null>>({})
+
+async function runFailureAction(service: ProjectView, action: FailureAction) {
+  const id = service.project.id
+  if (action === 'environment') {
+    configServiceId.value = id
+    return
+  }
+  if (action === 'settings') {
+    activeSection.value = 'settings'
+    return
+  }
+  failureActionBusy[id] = action
+  try {
+    if (action === 'install' || action === 'build') {
+      const response = await apiFetch(`/api/projects/${id}/prepare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step: action })
+      })
+      if (!response.ok) await throwResponseError(response, action === 'install' ? 'Could not install dependencies' : 'The build failed')
+    }
+    if (action === 'restart') await stopProject(service)
+    await startProject(service, action === 'retry-new-port' ? { forceAutoPort: true } : {})
+  } catch (err) {
+    setActionError(id, err instanceof Error ? err.message : String(err))
+  } finally {
+    failureActionBusy[id] = null
   }
 }
 
@@ -2809,6 +2767,128 @@ watch(activeSection, async (section) => {
 
 // The native browser view always paints above the page, so it is hidden while
 // any modal or menu is open instead of covering it.
+const paletteOpen = ref(false)
+
+async function showLogs(search?: string) {
+  const group = selectedGroup.value ?? folderGroups.value[0]
+  if (!group) return
+  openDetails(group)
+  projectPanelMode.value = 'logs'
+  await nextTick()
+  if (search !== undefined) logViewerRef.value?.search(search)
+  else logViewerRef.value?.focusSearch()
+}
+
+async function setTheme(theme: ThemeKey) {
+  applySettingsPatch({ theme })
+  saveSettingsToStorage()
+  const response = await apiFetch('/api/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ theme })
+  }).catch(() => null)
+  if (response?.ok) applySettingsPatch((await response.json()) as Settings)
+}
+
+const paletteCommands = computed<PaletteCommand[]>(() => {
+  const commands: PaletteCommand[] = []
+  folderGroups.value.forEach((group, index) => {
+    commands.push({
+      id: `open:${group.key}`,
+      group: 'Projects',
+      title: group.name,
+      subtitle: group.path,
+      shortcut: index < 9 ? `⌘${index + 1}` : undefined,
+      keywords: group.items.map(projectTitle).join(' '),
+      run: () => openDetails(group)
+    })
+  })
+  for (const group of folderGroups.value) {
+    const running = groupHasRunning(group)
+    commands.push({
+      id: `group:${group.key}`,
+      group: 'Projects',
+      title: running ? `Stop ${group.name}` : `Launch ${group.name}`,
+      subtitle: running ? 'Stop every service of the project' : 'Start every service, backends first',
+      run: () => running ? stopGroup(group) : launchGroup(group)
+    })
+  }
+  for (const group of folderGroups.value) {
+    for (const service of group.items) {
+      const name = projectTitle(service) === group.name ? group.name : `${group.name}/${projectTitle(service)}`
+      const id = service.project.id
+      commands.push({
+        id: `toggle:${id}`,
+        group: 'Services',
+        title: service.status.running ? `Stop ${name}` : `Start ${name}`,
+        subtitle: serviceStatusLabel(service),
+        run: () => toggleService(service)
+      })
+      if (service.status.running) {
+        commands.push({ id: `restart:${id}`, group: 'Services', title: `Restart ${name}`, run: () => runFailureAction(service, 'restart') })
+      }
+      if (projectUrl(service) && serviceReady(service)) {
+        commands.push({ id: `browser:${id}`, group: 'Services', title: `Open ${name} in the app browser`, subtitle: projectUrl(service), run: () => openInAppBrowser(service) })
+        commands.push({ id: `external:${id}`, group: 'Services', title: `Open ${name} in the default browser`, subtitle: projectUrl(service), run: () => openProjectUrl(service) })
+        commands.push({ id: `copy:${id}`, group: 'Services', title: `Copy ${name} URL`, subtitle: projectUrl(service), run: () => copyProjectUrl(service) })
+      }
+      commands.push({ id: `env:${id}`, group: 'Services', title: `${name}: environment and links…`, keywords: 'env variables secrets depends', run: () => { configServiceId.value = id } })
+    }
+  }
+  commands.push(
+    { id: 'logs', group: 'App', title: 'Search logs', shortcut: '⌘F', run: () => showLogs() },
+    { id: 'add', group: 'App', title: 'Add projects…', shortcut: '⌘O', run: () => openPicker() },
+    { id: 'home', group: 'App', title: 'Go home', run: () => goHome() },
+    { id: 'settings', group: 'App', title: 'Open settings', shortcut: '⌘,', run: () => { activeSection.value = 'settings' } },
+    {
+      id: 'theme',
+      group: 'App',
+      title: settings.theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme',
+      keywords: 'appearance dark light mode',
+      run: () => setTheme(settings.theme === 'dark' ? 'light' : 'dark')
+    }
+  )
+  return commands
+})
+
+// App-wide shortcuts; the ones that act on "the project" use the selected one.
+function handleShortcut(event: KeyboardEvent) {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return false
+  const key = event.key.toLowerCase()
+  if (key === 'k') {
+    paletteOpen.value = !paletteOpen.value
+    return true
+  }
+  if (paletteOpen.value || configServiceId.value) return false
+  if (key === ',') {
+    activeSection.value = 'settings'
+    return true
+  }
+  if (key === 'o' && !event.shiftKey) {
+    openPicker()
+    return true
+  }
+  if (key === 'f' && activeSection.value === 'projects' && selectedGroup.value) {
+    showLogs()
+    return true
+  }
+  if (/^[1-9]$/.test(key)) {
+    const group = folderGroups.value[Number(key) - 1]
+    if (group) openDetails(group)
+    return !!group
+  }
+  const group = activeSection.value === 'projects' ? selectedGroup.value : null
+  if (key === 'enter' && group) {
+    launchGroup(group)
+    return true
+  }
+  if (key === '.' && group) {
+    stopGroup(group)
+    return true
+  }
+  return false
+}
+
 // The service whose environment and links are being edited.
 const configServiceId = ref<string | null>(null)
 const configService = computed(() => projects.value.find((item) => item.project.id === configServiceId.value) ?? null)
@@ -2831,6 +2911,7 @@ function environmentSummary(service: ProjectView) {
 }
 
 const overlayOpen = computed(() =>
+  paletteOpen.value ||
   !!configServiceId.value ||
   pickerOpen.value ||
   !!manualPortTarget.value ||
@@ -2860,10 +2941,8 @@ watch(selectedGroupKey, async (key, previousKey) => {
   observeProjectSplit()
   if (key !== previousKey) projectPanelMode.value = 'logs'
   if (!key) return
-  logsPinnedToBottom.value = true
   await refreshSelectedLogs()
   await refreshSelectedInstances()
-  scrollLogsToBottom(true)
 })
 
 // A crash or exit changes which processes own the ports; refresh them so stale
@@ -2875,19 +2954,6 @@ watch(
   }
 )
 
-// The visible list is capped at 200 lines, so its length stops changing; track the newest entry.
-watch(
-  () => {
-    const lines = selectedLogLines.value
-    const newest = lines[lines.length - 1]
-    return `${lines.length}|${newest?.timestamp ?? ''}|${newest?.line ?? ''}`
-  },
-  () => {
-    scrollLogsToBottom()
-  }
-)
-
-
 function handleWindowClick() {
   if (groupMenuOpen.value) {
     closeGroupMenu()
@@ -2896,7 +2962,13 @@ function handleWindowClick() {
 }
 
 function handleWindowKeydown(event: KeyboardEvent) {
+  if (handleShortcut(event)) {
+    event.preventDefault()
+    return
+  }
   if (event.key === 'Escape') {
+    paletteOpen.value = false
+    configServiceId.value = null
     closeGroupMenu()
     closeExternalMenus()
     closeManualPortPrompt()
@@ -2970,6 +3042,10 @@ onMounted(async () => {
   }
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleWindowKeydown)
+  window.addEventListener('dragenter', handleDragEnter)
+  window.addEventListener('dragover', handleDragOver)
+  window.addEventListener('dragleave', handleDragLeave)
+  window.addEventListener('drop', handleDrop)
   window.addEventListener('resize', closeGroupMenu)
   window.addEventListener('resize', syncBrowserBounds)
   document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -2992,6 +3068,10 @@ onBeforeUnmount(() => {
   window.vibe?.browser?.hide()
   window.removeEventListener('click', handleWindowClick)
   window.removeEventListener('keydown', handleWindowKeydown)
+  window.removeEventListener('dragenter', handleDragEnter)
+  window.removeEventListener('dragover', handleDragOver)
+  window.removeEventListener('dragleave', handleDragLeave)
+  window.removeEventListener('drop', handleDrop)
   window.removeEventListener('resize', closeGroupMenu)
   window.removeEventListener('resize', syncBrowserBounds)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
@@ -3514,12 +3594,13 @@ onBeforeUnmount(() => {
                               >
                                 {{ actionErrors[service.project.id] }}
                               </div>
-                              <div
+                              <ServiceFailure
                                 v-if="service.status.error && !actionErrors[service.project.id] && !startupConflictFor(service)"
-                                class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2 py-1 text-xs text-[var(--warning-text)]"
-                              >
-                                {{ service.status.error }}
-                              </div>
+                                :error="service.status.error"
+                                :code="service.status.failure_code"
+                                :busy="failureActionBusy[service.project.id]"
+                                @action="runFailureAction(service, $event)"
+                              />
                               </div>
 
                               <div
@@ -3690,12 +3771,13 @@ onBeforeUnmount(() => {
                               >
                                 {{ actionErrors[service.project.id] }}
                               </div>
-                              <div
+                              <ServiceFailure
                                 v-if="service.status.error && !actionErrors[service.project.id] && !startupConflictFor(service)"
-                                class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-2 py-1 text-xs text-[var(--warning-text)]"
-                              >
-                                {{ service.status.error }}
-                              </div>
+                                :error="service.status.error"
+                                :code="service.status.failure_code"
+                                :busy="failureActionBusy[service.project.id]"
+                                @action="runFailureAction(service, $event)"
+                              />
                               <div
                                 v-if="serviceReady(service) && effectivePort(service)"
                                 class="mt-3 flex items-center justify-between rounded-xl bg-[var(--highlight-bg)] px-2.5 py-2 text-[11px] text-[var(--text-muted)]"
@@ -3873,80 +3955,20 @@ onBeforeUnmount(() => {
                           </div>
                           <span v-if="projectPanelMode === 'logs'" class="flex items-center gap-2 text-[11px] text-white/45">
                             <span class="h-1.5 w-1.5 rounded-full bg-[var(--live)]" :class="eventStreamConnected ? 'animate-pulse' : 'opacity-40'"></span>
-                            {{ eventStreamConnected ? 'Live' : 'Reconnecting' }} · {{ selectedLogLines.length }} lines
+                            {{ eventStreamConnected ? 'Live' : 'Reconnecting' }} · {{ projectLogEntries.length }} lines
                           </span>
                           <span v-else-if="activeBrowserTab?.detached" class="text-[11px] text-white/45">Detached window</span>
                         </div>
 
-                        <template v-if="projectPanelMode === 'logs'">
-                          <div class="mt-3 flex flex-wrap items-center gap-1.5">
-                            <input
-                              v-model="logFilter"
-                              :class="[inputBase, 'h-8 w-full py-1.5 text-xs sm:w-auto sm:flex-1']"
-                              placeholder="Search logs"
-                            />
-                            <button
-                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                              :class="logRoleFilter === 'all' && logLevelFilter === 'all' ? 'border-[var(--text-muted)] bg-[var(--chip-active-bg)] text-[var(--text-strong)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                              @click="logRoleFilter = 'all'; logLevelFilter = 'all'"
-                            >All</button>
-                            <button
-                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                              :class="logLevelFilter === 'errors' ? 'border-[var(--log-error)] bg-[var(--danger-bg)] text-[var(--log-error)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                              @click="logLevelFilter = logLevelFilter === 'errors' ? 'all' : 'errors'"
-                            >Errors</button>
-                            <button
-                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                              :class="logLevelFilter === 'warnings' ? 'border-[var(--log-warning)] text-[var(--log-warning)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                              @click="logLevelFilter = logLevelFilter === 'warnings' ? 'all' : 'warnings'"
-                            >Warnings</button>
-                            <button
-                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                              :class="logRoleFilter === 'backend' ? 'border-[var(--log-backend)] text-[var(--log-backend)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                              @click="logRoleFilter = logRoleFilter === 'backend' ? 'all' : 'backend'"
-                            >Backend</button>
-                            <button
-                              class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
-                              :class="logRoleFilter === 'frontend' ? 'border-[var(--log-frontend)] text-[var(--log-frontend)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--hover)]'"
-                              @click="logRoleFilter = logRoleFilter === 'frontend' ? 'all' : 'frontend'"
-                            >Frontend</button>
-                          </div>
-                          <div class="relative mt-3 flex-1 min-h-0">
-                            <div
-                              ref="logsScrollRef"
-                              class="relative h-full min-h-0 overflow-y-auto rounded-xl bg-[var(--log-bg)] px-2 py-2.5 font-mono text-[11px] leading-[1.55]"
-                              :class="noScrollbar"
-                              @scroll="handleLogsScroll"
-                            >
-                              <div v-if="selectedLogLines.length === 0" class="flex h-full min-h-[220px] items-center justify-center">
-                                <svg viewBox="0 0 48 48" class="h-9 w-9 text-[var(--text-subtle)] opacity-55" fill="none" stroke="currentColor" stroke-width="1.5">
-                                  <path d="M16 8v10M30 8v10M12 18h22v4c0 7-5 12-11 12v7" stroke-linecap="round" stroke-linejoin="round" />
-                                  <path d="M34 34l7 7M41 34l-7 7" stroke-linecap="round" />
-                                </svg>
-                              </div>
-                              <div
-                                v-for="entry in selectedLogLines"
-                                :key="entry.seq"
-                                class="flex min-w-0 gap-2 border-l-2 px-2 py-0.5"
-                                :class="logRowTone(entry)"
-                              >
-                                <span class="w-[58px] shrink-0 text-[10px] text-[var(--text-subtle)]">{{ formatTime(entry.timestamp) }}</span>
-                                <span class="w-[58px] shrink-0 truncate text-[10px] font-semibold" :class="logServiceTone(entry)">{{ entry.serviceName }}</span>
-                                <span class="min-w-0 flex-1 whitespace-pre-wrap break-words" :class="logLineTone(entry)" v-html="highlightText(entry.line, logFilter)"></span>
-                                <span
-                                  v-if="entry.repeat && entry.repeat > 1"
-                                  class="shrink-0 self-start rounded-full bg-[var(--hover)] px-1.5 text-[10px] font-semibold text-[var(--text-muted)]"
-                                  :title="`Printed ${entry.repeat} times in a row`"
-                                >×{{ entry.repeat }}</span>
-                              </div>
-                            </div>
-                            <button
-                              v-if="!logsPinnedToBottom"
-                              class="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-1.5 text-[11px] text-[var(--text)] shadow-lg hover:bg-[var(--hover)]"
-                              @click="jumpToLatest"
-                            >Jump to latest</button>
-                          </div>
-                        </template>
+                        <LogViewer
+                          v-if="projectPanelMode === 'logs'"
+                          ref="logViewerRef"
+                          :key="selectedGroupKey ?? ''"
+                          :entries="projectLogEntries"
+                          :services="projectLogServices"
+                          @open-url="openLogUrl"
+                          @open-file="openLogFile"
+                        />
 
                         <template v-else>
                           <div class="mt-3 flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b border-white/10 px-1" :class="noScrollbar">
@@ -4353,6 +4375,27 @@ onBeforeUnmount(() => {
       </div>
     </transition>
 
+    <div
+      v-if="draggingFiles"
+      class="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-8"
+    >
+      <div class="flex h-full w-full flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-[var(--electric)] bg-[color-mix(in_srgb,var(--panel-bg)_85%,transparent)]">
+        <svg viewBox="0 0 24 24" class="h-10 w-10 text-[var(--electric)]" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke-linejoin="round" />
+          <path d="M12 10v6M9 13h6" stroke-linecap="round" />
+        </svg>
+        <p class="text-lg font-semibold text-[var(--text-strong)]">Drop project folders to add them</p>
+        <p class="text-sm text-[var(--text-subtle)]">You will see the services Multiprise finds, and their commands, before anything is saved.</p>
+      </div>
+    </div>
+
+    <CommandPalette
+      v-if="paletteOpen"
+      :commands="paletteCommands"
+      @close="paletteOpen = false"
+      @search-logs="showLogs($event)"
+    />
+
     <ServiceConfigDialog
       v-if="configService && configServiceOption"
       :key="configServiceOption.id"
@@ -4450,7 +4493,7 @@ onBeforeUnmount(() => {
 
               <div class="mt-4 rounded-lg border border-[var(--border)] bg-[var(--panel-muted)] p-2">
                   <div v-if="selectedFolders.length === 0" class="flex min-h-28 items-center justify-center px-4 text-center text-sm text-[var(--text-subtle)]">
-                    No folders selected yet.
+                    No folders selected yet. Choose them, or drop them anywhere on this window.
                   </div>
                   <div
                     v-for="folder in selectedFolders"

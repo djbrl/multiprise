@@ -63,6 +63,13 @@ The names come from a small reverse proxy inside Multiprise that listens on the 
 
 Both are in **Settings → Stable hostnames** (the `proxy_port` and `hostnames` settings), and changes apply as soon as they are saved. If the port is taken when Multiprise starts, the proxy stays off, services keep working on their own ports, and `/api/hostnames` reports why.
 
+## Working in the App
+
+- **Command palette (⌘K):** jump to a project; start, stop, restart or open a service; edit its environment; add projects; switch theme; search the logs. Other shortcuts: ⌘F search logs, ⌘↩ launch the selected project, ⌘. stop it, ⌘1–⌘9 switch projects, ⌘O add projects, ⌘, settings.
+- **Logs:** one merged view per project with each service's name in its color. Filter by errors, warnings, stderr or service, search with highlighting, and pause the view while reading (new lines are counted, not lost). URLs are links (local ones open in the in-app browser) and source locations such as `src/routes.ts:12:5` open in VS Code at that line, or in the file's default app; only files inside the project can be opened.
+- **Failures come with a fix:** a failed start shows buttons for its cause: retry on a new port, install dependencies and retry, build and retry, open the service's environment, or change the startup timeout. A service that stopped answering offers Restart.
+- **Drag and drop:** drop project folders anywhere on the window to add them. Multiprise shows the services it found and their commands before anything is saved.
+
 ## Service Links and Environment
 
 Each service's **Environment…** button (in its details) edits the variables it starts with and the services it depends on.
@@ -287,7 +294,7 @@ multiprise/
 │   └── tsconfig.json
 ├── renderer/
 │   ├── src/App.vue              # Main Vue application
-│   ├── src/components/          # Dialogs and panels split out of App.vue
+│   ├── src/components/          # Command palette, log viewer, environment dialog, failure actions
 │   ├── src/ui.ts                # Shared button, input, and panel classes
 │   ├── src/style.css            # Tailwind layers and theme tokens
 │   └── vite.config.js

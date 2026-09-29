@@ -54,6 +54,8 @@ export type ProcessStatus = {
   ready_at?: string | null
   error?: string | null
   exit_code?: number | null
+  // What kind of failure `error` describes (see failures.ts), so the app can offer a fix.
+  failure_code?: string | null
   containers?: ContainerState[]
 }
 

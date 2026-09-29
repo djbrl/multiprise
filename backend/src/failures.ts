@@ -6,7 +6,7 @@ export type StartupConflict = {
 }
 
 export type StartupFailure = {
-  code: 'missing-build' | 'existing-instance' | 'port-in-use' | 'runtime-missing' | 'dependencies-missing' | 'environment-missing' | 'version-mismatch' | 'unhealthy-response' | 'timeout' | 'early-exit'
+  code: 'missing-build' | 'existing-instance' | 'port-in-use' | 'runtime-missing' | 'dependencies-missing' | 'environment-missing' | 'version-mismatch' | 'unhealthy-response' | 'timeout' | 'early-exit' | 'launch-error'
   message: string
   recovery: string
 }
@@ -80,6 +80,14 @@ export function classifyStartupFailure(output: string, fallback: string, port?: 
       recovery: 'Install dependencies at the workspace root and retry.'
     }
   }
+  // Multiprise's own environment errors: a template naming an unknown service, an unreadable secret.
+  if (/refers to "[^"]+", which is not a service|needs the port of .+ which has not been assigned|The secret \w+ could not be read/.test(output)) {
+    return {
+      code: 'environment-missing',
+      message: output.split('\n')[0],
+      recovery: 'Fix it in the service\'s environment and retry.'
+    }
+  }
   const envName = output.match(/(?:environment variable|env(?:ironment)?)[^\n]*?([A-Z][A-Z0-9_]{2,})[^\n]*(?:required|missing|not set)/i)?.[1]
   if (envName || /environment validation failed|missing environment/i.test(output)) {
     return {
@@ -115,6 +123,12 @@ export function classifyStartupFailure(output: string, fallback: string, port?: 
     message: fallback,
     recovery: 'Review the final service logs and retry after correcting the startup error.'
   }
+}
+
+// Errors raised before the service's process runs (preparation, environment, runtime lookup).
+export function launchFailureCode(message: string): StartupFailure['code'] {
+  const { code } = classifyStartupFailure(message, message)
+  return code === 'early-exit' ? 'launch-error' : code
 }
 
 export function failureMessage(failure: StartupFailure) {

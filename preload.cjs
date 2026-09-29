@@ -1,10 +1,12 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('vibe', {
   ping: () => ipcRenderer.invoke('ping'),
   backendHealth: () => ipcRenderer.invoke('backend:health'),
   openExternal: (url) => ipcRenderer.invoke('external:open', url),
   copyText: (text) => ipcRenderer.invoke('clipboard:write', text),
+  // Sandboxed pages cannot read a dropped file's path themselves.
+  pathForFile: (file) => webUtils.getPathForFile(file),
   cli: {
     status: () => ipcRenderer.invoke('cli:status'),
     install: () => ipcRenderer.invoke('cli:install')

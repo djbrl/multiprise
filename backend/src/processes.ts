@@ -119,7 +119,7 @@ export function getProcessStatus(id: string): ProcessStatus {
   return statuses.get(id) ?? stoppedStatus()
 }
 
-export function markProcessFailed(id: string, error: string, exitCode: number | null = null) {
+export function markProcessFailed(id: string, error: string, exitCode: number | null = null, failureCode: string | null = null) {
   setStatus(id, {
     phase: 'failed',
     running: false,
@@ -128,7 +128,8 @@ export function markProcessFailed(id: string, error: string, exitCode: number | 
     started_at: null,
     ready_at: null,
     error,
-    exit_code: exitCode
+    exit_code: exitCode,
+    failure_code: failureCode
   })
   appendProcessLog(id, 'stderr', error)
 }
@@ -386,7 +387,8 @@ export async function startProcess(options: {
       started_at: managed.startedAt,
       ready_at: managed.readyAt,
       error: message,
-      exit_code: code ?? null
+      exit_code: code ?? null,
+      failure_code: failure.code
     })
     onExit?.(code ?? null, message)
   })
@@ -422,7 +424,8 @@ export async function startProcess(options: {
       started_at: managed.startedAt,
       ready_at: null,
       error: message,
-      exit_code: exitCode
+      exit_code: exitCode,
+      failure_code: failure.code
     })
     if (!exited) {
       terminate(managed)
@@ -460,14 +463,14 @@ export async function probeProcess(id: string, timeoutMs = 2000): Promise<boolea
 export function markProcessUnresponsive(id: string, message: string) {
   const status = getProcessStatus(id)
   if (!processes.has(id) || status.phase !== 'ready') return
-  setStatus(id, { ...status, phase: 'failed', ready: false, error: message })
+  setStatus(id, { ...status, phase: 'failed', ready: false, error: message, failure_code: 'not-responding' })
   appendProcessLog(id, 'stderr', `[multiprise] ${message}`)
 }
 
 export function markProcessResponsive(id: string) {
   const status = getProcessStatus(id)
   if (!processes.has(id) || status.phase !== 'failed' || !status.running) return
-  setStatus(id, { ...status, phase: 'ready', ready: true, error: null })
+  setStatus(id, { ...status, phase: 'ready', ready: true, error: null, failure_code: null })
   appendProcessLog(id, 'stdout', '[multiprise] Responding again.')
 }
 

@@ -24,6 +24,7 @@ import { resolveProjectNodeRuntime } from './runtime'
 import { spawnCommand } from './commands'
 import { dockerStatus, followDockerLogsFrom, refreshDockerProject } from './docker'
 import { envFileStatus, serviceEnvironment } from './environment'
+import { launchFailureCode } from './failures'
 import { HttpError, isValidPort } from './http'
 
 export const DEFAULT_DOCKER_STOP = 'docker compose down'
@@ -285,7 +286,7 @@ export async function launchService(
       }
       const message = err instanceof Error ? err.message : 'Failed to start'
       if (project.kind !== 'docker_compose' && getProcessStatus(project.id).phase !== 'failed') {
-        markProcessFailed(project.id, message)
+        markProcessFailed(project.id, message, null, launchFailureCode(message))
       }
       project.last_error = message
       project.last_exit_at = new Date().toISOString()

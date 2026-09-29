@@ -24,10 +24,10 @@ Ordered by priority within each section. Check items off as they land.
 
 ## UI/UX
 
-- [ ] **Command palette (⌘K)** — jump to a project, start/stop, open URL, search logs; keyboard shortcuts for common actions.
-- [ ] **Log viewer** — merged project view with colored service prefixes, stdout/stderr filter, search highlighting, pause/follow, clickable URLs and `file:line` links that open in the editor.
-- [ ] **Actionable failures** — turn each classified failure's recovery hint into a button (install dependencies, kill PID, pick another port, open `.env`).
-- [ ] **Drag-and-drop onboarding** — drop a folder on the window, confirm detected services and commands before saving.
+- [x] **Command palette (⌘K)** — jump to a project, start/stop, open URL, search logs; keyboard shortcuts for common actions.
+- [x] **Log viewer** — merged project view with colored service prefixes, stdout/stderr filter, search highlighting, pause/follow, clickable URLs and `file:line` links that open in the editor.
+- [x] **Actionable failures** — turn each classified failure's recovery hint into a button (install dependencies, kill PID, pick another port, open `.env`).
+- [x] **Drag-and-drop onboarding** — drop a folder on the window, confirm detected services and commands before saving.
 
 ## Features
 

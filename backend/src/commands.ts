@@ -237,3 +237,18 @@ export async function checkVSCodeAvailability() {
     }
   }
 }
+
+// Opens a file at a line in VS Code when its `code` command is available, otherwise with the
+// file's default app (which cannot jump to the line).
+export async function openFileInEditor(file: string, line?: number, column?: number) {
+  const location = line ? `${file}:${line}${column ? `:${column}` : ''}` : file
+  const code = await spawnAndWait('code', ['-g', location], { cwd: path.dirname(file) })
+  if (code.ok) return 'vscode'
+  const fallback = process.platform === 'darwin'
+    ? await spawnAndWait('open', [file], { cwd: path.dirname(file) })
+    : process.platform === 'win32'
+      ? await spawnAndWait('cmd', ['/c', 'start', '', file], { cwd: path.dirname(file) })
+      : await spawnAndWait('xdg-open', [file], { cwd: path.dirname(file) })
+  if (fallback.ok) return 'default'
+  throw new Error(`Could not open ${file} (${fallback.error ?? 'no editor found'})`)
+}

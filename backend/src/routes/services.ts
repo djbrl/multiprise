@@ -11,6 +11,7 @@ import { getLogs, getProcessPid, isManagedProcessGroup } from '../processes'
 import { detectStartupConflict } from '../failures'
 import { processExists, processWorkingDirectory, terminateExternalProcess } from '../commands'
 import { launchWithDependencies, stopService } from '../launch'
+import { runPreparationStep } from '../preparation'
 import { handle, isSameOrInside } from '../http'
 import { type ApiContext } from './context'
 
@@ -57,6 +58,27 @@ export function registerServiceRoutes(app: Express, { state, launches }: ApiCont
     }
     const payload = (req.body && typeof req.body === 'object' ? req.body : {}) as StartProjectPayload
     res.json(await launchWithDependencies(state, launches, project, payload))
+  }))
+
+  // Fixes offered for a failed start: install dependencies or build, then the app retries.
+  app.post('/api/projects/:id/prepare', handle(async (req: Request, res: Response) => {
+    const project = state.projects.find((entry) => entry.id === req.params.id)
+    if (!project) {
+      return res.status(404).send('Project not found')
+    }
+    const step = req.body?.step
+    if (step !== 'install' && step !== 'build') {
+      return res.status(400).send('step must be "install" or "build"')
+    }
+    if (project.kind === 'docker_compose' || getProcessPid(project.id) || launches.has(project.id)) {
+      return res.status(409).send('Stop the service first')
+    }
+    try {
+      await runPreparationStep(project, step)
+    } catch (err) {
+      return res.status(400).send(err instanceof Error ? err.message : 'Preparation failed')
+    }
+    res.json({ ok: true })
   }))
 
   app.post('/api/projects/:id/stop', handle(async (req: Request, res: Response) => {

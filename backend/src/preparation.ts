@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { appendProcessLog, trackPreparation } from './processes'
-import { commandForScript, type PackageJsonMetadata } from './scanner'
+import { commandForScript, detectProject, type PackageJsonMetadata } from './scanner'
 import { assertCommandAvailable } from './runtime'
 import { type DetectResponse, type Project } from './types'
 
@@ -135,4 +135,18 @@ export async function prepareService(options: PreparationOptions) {
   if (!await exists(expectedTarget)) {
     throw new Error(`Build completed, but startup target ${path.relative(project.path, expectedTarget)} is still missing.`)
   }
+}
+
+// Run from the app when a start failed for missing dependencies or build output.
+export async function runPreparationStep(project: Project, step: 'install' | 'build') {
+  const detection = await detectProject(project.path, project.root_path ?? project.path)
+  const manager = detection.package_manager ?? project.package_manager ?? 'npm'
+  if (step === 'install') {
+    const installRoot = detection.package_root ?? project.install_root ?? project.root_path ?? project.path
+    await runPreparationCommand({ id: project.id, command: installCommand(manager), cwd: installRoot, label: 'Installing dependencies' })
+    return
+  }
+  const packageJson = await readPackageJson(project.path)
+  if (!packageJson?.scripts?.build) throw new Error(`${project.name} has no build script`)
+  await runPreparationCommand({ id: project.id, command: commandForScript(manager, 'build'), cwd: project.path, label: 'Building' })
 }

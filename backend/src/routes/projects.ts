@@ -14,7 +14,7 @@ import { detectProject, discoverProjectServices } from '../scanner'
 import { forgetLogs, stopProcess } from '../processes'
 import { deleteLogFiles } from '../logfiles'
 import { forgetDockerProject } from '../docker'
-import { openInFileManager, openInVSCode } from '../commands'
+import { openFileInEditor, openInFileManager, openInVSCode } from '../commands'
 import { findProjectIcon, resolveProjectIcon } from '../icons'
 import { buildProjectView, cancelLaunch, validateLinks } from '../launch'
 import { describeEnvironment, envFileStatus, saveEnvironment, secrets } from '../environment'
@@ -126,7 +126,7 @@ export function registerProjectRoutes(app: Express, { state, launches }: ApiCont
           path: projectPath,
           name,
           has_services: false,
-          error: 'Folder not found'
+          error: stats ? 'Not a folder; add the folder that contains it' : 'Folder not found'
         })
         continue
       }
@@ -256,6 +256,35 @@ export function registerProjectRoutes(app: Express, { state, launches }: ApiCont
     await saveEnvironment(project, req.body?.variables)
     await persistProjects(state)
     res.json({ variables: describeEnvironment(project), links: project.links ?? [], env_file: await envFileStatus(project) })
+  }))
+
+  // Source locations clicked in the logs. Only files inside the project can be opened.
+  app.post('/api/projects/:id/open-file', handle(async (req: Request, res: Response) => {
+    const project = state.projects.find((entry) => entry.id === req.params.id)
+    if (!project) {
+      return res.status(404).send('Project not found')
+    }
+    const requested = typeof req.body?.path === 'string' ? req.body.path.replace(/^file:\/\//, '') : ''
+    if (!requested) {
+      return res.status(400).send('Path is required')
+    }
+    const lineNumber = Number.isInteger(req.body?.line) && req.body.line > 0 ? req.body.line : undefined
+    const column = Number.isInteger(req.body?.column) && req.body.column > 0 ? req.body.column : undefined
+    const root = project.root_path ?? project.path
+    // Relative paths come from the service's own output, so they are relative to its folder
+    // (or, for monorepo tools, to the project root).
+    const candidates = path.isAbsolute(requested)
+      ? [path.resolve(requested)]
+      : [path.resolve(project.path, requested), path.resolve(root, requested)]
+    for (const file of candidates) {
+      if (!isSameOrInside(file, root)) continue
+      const stats = await fs.stat(file).catch(() => null)
+      if (!stats?.isFile()) continue
+      const opened = await openFileInEditor(file, lineNumber, column)
+      return res.json({ ok: true, file, opened })
+    }
+    const outside = candidates.every((file) => !isSameOrInside(file, root))
+    return res.status(outside ? 403 : 404).send(outside ? 'Only files inside the project can be opened' : `${requested} was not found in the project`)
   }))
 
   app.post('/api/projects/:id/detect', handle(async (req: Request, res: Response) => {
