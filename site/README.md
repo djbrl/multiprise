@@ -16,3 +16,13 @@ One static file, `index.html`. No build step. Preview with `python3 -m http.serv
 **Live:** https://multiprise.vercel.app (Vercel project `bountbi/multiprise`).
 
 **Redeploy:** `cd site && vercel deploy --prod --yes`. `site/.vercel/` holds the project link and `.env.local` holds a Vercel token; both are gitignored and `.vercelignore` keeps `.env*` out of deployments.
+
+**Windows waitlist:** the band under the header ("Join the waitlist") posts to `api/waitlist.js`, which stores each address as its own blob in the private Vercel Blob store `multiprise-waitlist` (linked to this project as `BLOB_READ_WRITE_TOKEN`). Only the address and the time it was added are kept; joining twice keeps one entry; a hidden honeypot field turns away simple bots. Set `SITE.windows` to `null` to remove the band.
+
+To download the list as CSV (the key is in `site/.env.waitlist.local`, which is gitignored and never deployed; it is also set on Vercel as `WAITLIST_ADMIN_KEY`, which is write-only there):
+
+```bash
+curl -H "Authorization: Bearer $(cut -d= -f2- site/.env.waitlist.local)" https://multiprise.vercel.app/api/waitlist
+```
+
+To rotate the key: `vercel env rm WAITLIST_ADMIN_KEY production`, add a new one with `vercel env add`, update `.env.waitlist.local`, and redeploy.

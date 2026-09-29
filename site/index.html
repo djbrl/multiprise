@@ -49,13 +49,22 @@ code { font-family: var(--mono); }
 section { position: relative; }
 [hidden] { display: none !important; }
 
-/* ---------- announcement band (SITE.windows): folds away once you scroll ---------- */
-.band { position: fixed; inset: 0 0 auto; z-index: 51; height: 34px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; background: var(--text); color: #e7e5e4; font: 500 13px var(--body); text-align: center; transition: transform .35s var(--ease); }
-.band svg { width: 14px; height: 14px; flex: none; }
-.band b { color: #fff; font-weight: 500; }
-body.has-band nav { top: 34px; transition: top .35s var(--ease); }
-body.has-band.scrolled nav { top: 0; }
-body.has-band.scrolled .band { transform: translateY(-100%); }
+/* ---------- Windows band + waitlist (SITE.windows): under the header, folds away on scroll ---------- */
+.band { position: fixed; top: 60px; left: 0; right: 0; z-index: 49; background: #f1f1ef; border-bottom: 1px solid var(--line); color: var(--muted); font: 400 14px var(--body); transition: transform .35s var(--ease); }
+.band-row { min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 10px 14px; padding: 6px 16px; flex-wrap: wrap; text-align: center; }
+.band b { color: var(--text); font-weight: 500; }
+.band-cta { border: 0; background: none; padding: 0; font: 500 14px var(--body); color: var(--live); cursor: pointer; white-space: nowrap; }
+.band-cta::after { content: " →"; }
+.band-cta:hover { text-decoration: underline; text-underline-offset: 3px; }
+.band input[type=email] { height: 32px; width: min(260px, 60vw); border-radius: 8px; border: 1px solid rgba(28,25,23,.18); background: #fff; padding: 0 12px; font: 14px var(--body); color: var(--text); outline: none; }
+.band input[type=email]:focus { border-color: var(--live); box-shadow: 0 0 0 3px var(--live-soft); }
+.band-submit { height: 32px; border: 0; border-radius: 8px; padding: 0 14px; background: var(--text); color: #fff; font: 500 14px var(--body); cursor: pointer; }
+.band-submit:disabled { opacity: .5; cursor: default; }
+.band-x { border: 0; background: none; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 4px; }
+.band-fine { flex-basis: 100%; font-size: 12px; color: var(--faint); margin-top: -4px; }
+.band-err { color: var(--error); font-size: 13px; padding: 0 16px 8px; text-align: center; margin: 0; }
+.band .hp, .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+body.scrolled .band:not(.open) { transform: translateY(-100%); }
 @media (max-width: 640px) { .band-more { display: none; } }
 
 /* ---------- nav ---------- */
@@ -302,11 +311,6 @@ footer a:hover { color: var(--text); }
 </head>
 <body>
 
-<div class="band" id="band" hidden>
-  <svg viewBox="28 28 456 456" fill="none" aria-hidden="true"><circle cx="256" cy="256" r="206" stroke="#ea580c" stroke-width="40"/><rect x="237" y="72" width="38" height="96" rx="19" fill="#ea580c"/><path d="M167 234 L211 275 L167 317 M269 317 H345" stroke="#ea580c" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/></svg>
-  <span><b>A Windows build is coming soon.</b><span class="band-more"> The early build is for Apple Silicon Macs for now.</span></span>
-</div>
-
 <nav>
   <div class="wrap">
     <a class="logo" href="#hero" aria-label="multiprise"><img src="lockup.svg" alt="multiprise"></a>
@@ -320,6 +324,24 @@ footer a:hover { color: var(--text); }
     <a class="btn small" data-download href="#get"><svg viewBox="0 0 814 1000" aria-hidden="true"><path d="M788 341c-6 4-108 62-108 190 0 148 130 200 134 201-1 3-21 71-68 141-43 61-87 122-156 122s-86-40-165-40c-77 0-104 41-167 41s-107-57-158-127C42 787 0 671 0 560c0-178 116-272 230-272 61 0 111 40 149 40 37 0 94-42 163-42 26 0 120 2 182 91zM543 173c29-34 49-81 49-129 0-6 0-13-2-18-47 2-102 31-135 69-26 29-50 76-50 124 0 7 1 14 2 17 3 0 8 1 12 1 42 0 95-28 124-64z"/></svg>Download</a>
   </div>
 </nav>
+
+<!-- Windows band + waitlist (SITE.windows). Addresses go to api/waitlist.js (private Vercel Blob store). -->
+<div class="band" id="band" hidden>
+  <div class="band-row" id="bandPitch">
+    <span><b>A Windows build is coming soon.</b><span class="band-more"> The early build is for Apple Silicon Macs for now.</span></span>
+    <button type="button" class="band-cta" id="bandJoin">Join the waitlist</button>
+  </div>
+  <form class="band-row" id="bandForm" hidden novalidate>
+    <label class="sr" for="wlEmail">Email address</label>
+    <input id="wlEmail" name="email" type="email" required placeholder="you@example.com" autocomplete="email">
+    <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <button type="submit" class="band-submit" id="bandSubmit">Notify me</button>
+    <button type="button" class="band-x" id="bandClose" aria-label="Close">×</button>
+    <span class="band-fine">We'll only use it to tell you when the Windows build is ready.</span>
+  </form>
+  <div class="band-row" id="bandDone" hidden role="status"><span><b>You're on the list.</b> We'll email you when the Windows build is ready.</span></div>
+  <p class="band-err" id="bandErr" role="alert" hidden></p>
+</div>
 
 <main>
 <!-- 1. Hero: the claim, then the real app, which tilts upright as you scroll. -->
@@ -556,8 +578,9 @@ const SITE = {
     cli: "next",
   },
   license: "MIT",
-  // the band at the top of the page: "soon" = Windows build announced as coming, null = no band
+  // the band under the header: "soon" = Windows build coming, with the waitlist; null = no band
   windows: "soon",
+  waitlist: "/api/waitlist",
 };
 
 /* ---------- fill the page from SITE ---------- */
@@ -586,12 +609,37 @@ $("#footLeft").textContent = "Multiprise" + (SITE.license ? " · Open source, " 
 $("#footLinks").innerHTML = [["repo", "Source"], ["download", "Download"]]
   .filter(([k]) => SITE.links[k]).map(([k, t]) => `<a href="${esc(SITE.links[k])}" target="_blank" rel="noopener">${t}</a>`).join(" · ");
 
-/* ---------- Windows band ---------- */
+/* ---------- Windows band + waitlist ---------- */
 if (SITE.windows === "soon") {
-  $("#band").hidden = false;
-  document.body.classList.add("has-band");
+  const band = $("#band"), form = $("#bandForm"), pitch = $("#bandPitch"), done = $("#bandDone"), err = $("#bandErr");
+  band.hidden = false;
   const fold = () => document.body.classList.toggle("scrolled", scrollY > 40);
   addEventListener("scroll", fold, { passive: true }); fold();
+  const show = (el) => { [pitch, form, done].forEach(x => { x.hidden = x !== el; }); band.classList.toggle("open", el === form); };
+  $("#bandJoin").addEventListener("click", () => { show(form); $("#wlEmail").focus(); });
+  $("#bandClose").addEventListener("click", () => { err.hidden = true; show(pitch); });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = $("#wlEmail").value.trim();
+    err.hidden = true;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { err.textContent = "Enter a valid email address."; err.hidden = false; return; }
+    $("#bandSubmit").disabled = true;
+    try {
+      const response = await fetch(SITE.waitlist, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, website: form.elements.website.value })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Something went wrong. Try again in a moment.");
+      show(done);
+      setTimeout(() => band.classList.remove("open"), 4000);
+    } catch (error) {
+      err.textContent = error.message; err.hidden = false;
+    } finally {
+      $("#bandSubmit").disabled = false;
+    }
+  });
 }
 
 /* ---------- get it early: the two ways ---------- */

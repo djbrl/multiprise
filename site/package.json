@@ -1,0 +1,9 @@
+{
+  "name": "multiprise-site",
+  "private": true,
+  "type": "module",
+  "description": "Landing page (static index.html) and the Windows waitlist function (api/waitlist.js).",
+  "dependencies": {
+    "@vercel/blob": "^2.8.0"
+  }
+}
