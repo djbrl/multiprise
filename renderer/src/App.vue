@@ -704,6 +704,9 @@ async function toggleServicesPane() {
 
 const folderGroups = computed(() => groupByFolder(projects.value, (item) => projectRootPath(item)))
 const recentGroupKeys = ref<string[]>([])
+// Home illustration: one lit socket per running service, up to the four drawn.
+const homeLiveSockets = computed(() => Math.min(4, projects.value.filter((item) => serviceReady(item)).length))
+
 const homeProjectGroups = computed(() => {
   const byKey = new Map(folderGroups.value.map((group) => [group.key, group]))
   const ordered = recentGroupKeys.value
@@ -3014,13 +3017,21 @@ onBeforeUnmount(() => {
                     <path d="M500 77H616" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
                     <path class="animate-current-flow" d="M4 77H120" stroke="var(--electric)" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 16" />
                     <rect x="120" y="25" width="380" height="104" rx="30" fill="var(--panel-bg)" stroke="currentColor" stroke-width="2" />
-                    <g v-for="x in [176, 266, 356, 446]" :key="x" transform="translate(0 1)">
-                      <circle :cx="x" cy="76" r="29" fill="var(--panel-muted)" stroke="currentColor" stroke-width="2" />
-                      <rect :x="x - 10" y="62" width="5" height="14" rx="2.5" fill="var(--text-subtle)" />
-                      <rect :x="x + 5" y="62" width="5" height="14" rx="2.5" fill="var(--text-subtle)" />
-                      <circle :cx="x" cy="87" r="4" fill="var(--text-subtle)" />
+                    <!-- Each socket is the brand mark (brand/mark.svg); one lights up per running service. -->
+                    <g
+                      v-for="(x, index) in [176, 266, 356, 446]"
+                      :key="x"
+                      :transform="`translate(${x - 256 * 0.15} ${77 - 256 * 0.15}) scale(0.15)`"
+                      class="home-socket"
+                      :class="index < homeLiveSockets ? 'is-live' : ''"
+                    >
+                      <circle cx="256" cy="256" r="236" fill="var(--panel-muted)" />
+                      <circle cx="256" cy="256" r="206" stroke="currentColor" stroke-width="30" />
+                      <rect x="237" y="72" width="38" height="96" rx="19" fill="currentColor" />
+                      <path d="M167 234 L211 275 L167 317" stroke="currentColor" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" />
+                      <path class="home-socket-cursor" d="M269 317 H345" stroke="currentColor" stroke-width="30" stroke-linecap="round" />
                     </g>
-                    <circle cx="484" cy="42" r="5" fill="var(--electric)" />
+                    <circle cx="484" cy="42" r="5" :fill="homeLiveSockets ? 'var(--electric)' : 'currentColor'" />
                   </svg>
                 </section>
 
@@ -4300,6 +4311,23 @@ onBeforeUnmount(() => {
   --input-placeholder: #85858C;
   --chip-active-bg: #474747;
   --danger-bg: #4A302D;
+}
+
+.home-socket {
+  color: var(--text-subtle);
+  transition: color 0.4s ease;
+}
+.home-socket.is-live {
+  color: var(--electric);
+}
+.home-socket.is-live .home-socket-cursor {
+  animation: home-socket-blink 1.1s steps(1) infinite;
+}
+@keyframes home-socket-blink {
+  50% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-socket.is-live .home-socket-cursor { animation: none; }
 }
 
 .powered-service {
