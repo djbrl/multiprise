@@ -88,11 +88,16 @@ export function classifyStartupFailure(output: string, fallback: string, port?: 
       recovery: 'Fix it in the service\'s environment and retry.'
     }
   }
-  const envName = output.match(/(?:environment variable|env(?:ironment)?)[^\n]*?([A-Z][A-Z0-9_]{2,})[^\n]*(?:required|missing|not set)/i)?.[1]
-  if (envName || /environment validation failed|missing environment/i.test(output)) {
+  // Variable names are upper case; "env" alone would also match ".env.example" and friends.
+  const envMention = /(?:environment variable|env(?:ironment)?\b)[^\n]*?(?:required|missing|not set)/i.test(output)
+  const envName = envMention
+    ? output.match(/(?:environment variable|env(?:ironment)?\b)[^\n]*?\b([A-Z][A-Z0-9_]{2,})\b[^\n]*(?:required|missing|not set)/i)?.[1]
+    : undefined
+  const namedVariable = envName && /^[A-Z][A-Z0-9_]+$/.test(envName) ? envName : undefined
+  if (namedVariable || /environment validation failed|missing environment/i.test(output)) {
     return {
       code: 'environment-missing',
-      message: envName ? 'Required environment variable ' + envName + ' is missing.' : 'Required environment configuration is missing.',
+      message: namedVariable ? 'Required environment variable ' + namedVariable + ' is missing.' : 'Required environment configuration is missing.',
       recovery: 'Add the missing value to the project environment and retry.'
     }
   }

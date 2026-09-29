@@ -89,8 +89,9 @@ function flushBuffer(id: string, stream: 'stdout' | 'stderr', buffer: string) {
   return remainder
 }
 
+// The service's own output, for classifying failures; Multiprise's notes would mislead it.
 function outputFor(id: string) {
-  return (logs.get(id) ?? []).map((entry) => entry.line).join('\n')
+  return (logs.get(id) ?? []).filter((entry) => !entry.line.startsWith('[multiprise]')).map((entry) => entry.line).join('\n')
 }
 
 function stoppedStatus(): ProcessStatus {

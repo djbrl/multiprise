@@ -225,6 +225,13 @@ export async function detectProject(dir: string, rootBoundary = dir): Promise<De
   }
 }
 
+// A worktree's .git is a file pointing into the main repository's .git/worktrees/; a
+// submodule's points into .git/modules/ and stays part of the project.
+async function isGitWorktree(dir: string) {
+  const pointer = await fs.readFile(path.join(dir, '.git'), 'utf8').catch(() => '')
+  return /^gitdir:.*[\\/]worktrees[\\/]/m.test(pointer)
+}
+
 export async function scanProjects(roots: string[], settings: Settings): Promise<ScanResult[]> {
   const results: ScanResult[] = []
   const visited = new Set<string>()
@@ -237,10 +244,13 @@ export async function scanProjects(roots: string[], settings: Settings): Promise
 
     // The folder the user picked is always scanned, even if it is named "build" or "dist".
     const baseName = path.basename(dir)
-    if (depth > 0 && ignore.has(baseName)) return
+    // Hidden folders (.claude, .github, …) hold tooling, not services.
+    if (depth > 0 && (ignore.has(baseName) || baseName.startsWith('.'))) return
 
     const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
     const entryNames = entries.map((entry) => entry.name)
+    // Another checkout of a repository (git worktree) duplicates every service in it.
+    if (depth > 0 && entries.some((entry) => entry.name === '.git' && entry.isFile()) && await isGitWorktree(dir)) return
     const hasDocker = DOCKER_FILES.some((file) => entryNames.includes(file))
     const hasPackageJson = entryNames.includes('package.json')
     const hasCargo = entryNames.includes('Cargo.toml')

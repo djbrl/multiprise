@@ -739,3 +739,31 @@ test('ports that browsers refuse to open are never assigned', async () => {
   used.add(5555)
   assert.equal(await pickRandomPort({ role: 'frontend', used }), null)
 })
+
+test('git worktrees and hidden folders inside a project are not discovered as more services', async () => {
+  const root = await temporaryDirectory('multiprise-worktrees')
+  const app = (dir, name) => fs.mkdir(dir, { recursive: true }).then(() =>
+    fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ name, scripts: { dev: 'node server.js' } })))
+  await app(path.join(root, 'backend'), 'backend')
+  await app(path.join(root, 'frontend'), 'frontend')
+  // A Claude Code worktree, a worktree outside hidden folders, and a submodule.
+  const hiddenWorktree = path.join(root, '.claude', 'worktrees', 'cranky-antonelli')
+  await app(path.join(hiddenWorktree, 'backend'), 'backend')
+  await fs.writeFile(path.join(hiddenWorktree, '.git'), `gitdir: ${root}/.git/worktrees/cranky-antonelli\n`)
+  const visibleWorktree = path.join(root, 'review-copy')
+  await app(path.join(visibleWorktree, 'frontend'), 'frontend')
+  await fs.writeFile(path.join(visibleWorktree, '.git'), `gitdir: ${root}/.git/worktrees/review-copy\n`)
+  const submodule = path.join(root, 'payments')
+  await app(submodule, 'payments')
+  await fs.writeFile(path.join(submodule, '.git'), 'gitdir: ../.git/modules/payments\n')
+
+  const services = await scanner.discoverProjectServices(root, { scan_depth: 8, scan_ignore: [] })
+  assert.deepEqual(services.map((service) => path.relative(root, service.path)).sort(), ['backend', 'frontend', 'payments'])
+})
+
+test('Multiprise notes about .env files are not mistaken for a missing variable', () => {
+  const note = '[multiprise] .env.example exists but there is no .env, so these are not set: DATABASE_URL.'
+  assert.notEqual(classifyStartupFailure('env example file is missing', 'Exited.').message, 'Required environment variable example is missing.')
+  assert.equal(classifyStartupFailure('Error: environment variable DATABASE_URL is required', 'Exited.').message, 'Required environment variable DATABASE_URL is missing.')
+  assert.equal(classifyStartupFailure(`${note}\nsh: nest: command not found`, 'Exited.').code, 'runtime-missing')
+})
