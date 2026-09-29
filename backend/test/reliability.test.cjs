@@ -720,3 +720,20 @@ test('the event stream pushes status changes to connected clients', async (conte
   const events = received.join('').split('\n\n').filter((frame) => frame.startsWith('data: ')).map((frame) => JSON.parse(frame.slice(6)))
   assert.ok(events.some((event) => event.type === 'status' && event.id === 'stream-test' && event.status.phase === 'starting'))
 })
+
+test('ports that browsers refuse to open are never assigned', async () => {
+  const { pickRandomPort, BROWSER_BLOCKED_PORTS } = require('../dist/ports.js')
+  // Everything in the frontend ranges is taken except two blocked ports and one ordinary one.
+  const used = new Set()
+  for (let port = 3000; port <= 5999; port += 1) used.add(port)
+  used.delete(4045)
+  used.delete(5060)
+  used.delete(5555)
+  assert.ok(BROWSER_BLOCKED_PORTS.has(4045) && BROWSER_BLOCKED_PORTS.has(5060))
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    assert.equal(await pickRandomPort({ role: 'frontend', used }), 5555)
+  }
+  // With the ordinary one taken too, nothing is left: the blocked ports are still refused.
+  used.add(5555)
+  assert.equal(await pickRandomPort({ role: 'frontend', used }), null)
+})
