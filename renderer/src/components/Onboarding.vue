@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import multipriseIconUrl from '../assets/multiprise-icon.svg'
+import { apiFetch } from '../lib/api'
+import { type ProjectInspectResult } from '../types'
 import { btnPanelPrimaryLg, btnPanelSecondary, noScrollbar, spinnerClass } from '../ui'
 
 // First run: what Multiprise does, adding the first projects, and the optional CLI/MCP setup.
 
-type ServicePreview = { name: string; role: string; start: string }
-type Preview = { path: string; name: string; has_services: boolean; error?: string | null; services?: ServicePreview[] }
-
-const props = defineProps<{ api: (path: string, init?: RequestInit) => Promise<Response> }>()
 const emit = defineEmits<{ done: []; 'projects-added': [] }>()
 
 const MCP_SETUP_COMMAND = 'claude mcp add multiprise -- multiprise mcp'
@@ -16,7 +14,7 @@ const steps = ['Welcome', 'Projects', 'Terminal', 'Ready'] as const
 const step = ref(0)
 
 const folders = ref<string[]>([])
-const previews = reactive<Record<string, Preview>>({})
+const previews = reactive<Record<string, ProjectInspectResult>>({})
 const choosing = ref(false)
 const adding = ref(false)
 const addedCount = ref(0)
@@ -35,13 +33,13 @@ async function addFolders(paths: string[]) {
   folders.value = [...folders.value, ...fresh]
   error.value = ''
   try {
-    const response = await props.api('/api/projects/inspect', {
+    const response = await apiFetch('/api/projects/inspect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ roots: fresh })
     })
     if (!response.ok) throw new Error(await response.text() || 'Could not look inside those folders')
-    const data = (await response.json()) as { projects: Preview[] }
+    const data = (await response.json()) as { projects: ProjectInspectResult[] }
     // Results are keyed by the resolved path; map them back to what was added.
     data.projects.forEach((preview, index) => { previews[fresh[index]] = preview })
   } catch (err) {
@@ -52,7 +50,7 @@ async function addFolders(paths: string[]) {
 async function chooseFolders() {
   choosing.value = true
   try {
-    const response = await props.api('/api/fs/pick', { method: 'POST' })
+    const response = await apiFetch('/api/fs/pick', { method: 'POST' })
     if (response.ok) await addFolders(((await response.json()) as { paths: string[] }).paths)
   } finally {
     choosing.value = false
@@ -69,7 +67,7 @@ async function addProjects() {
   error.value = ''
   const failures: string[] = []
   for (const folder of addable.value) {
-    const response = await props.api('/api/projects', {
+    const response = await apiFetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: folder })

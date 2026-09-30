@@ -6,7 +6,7 @@ import { publish } from './events'
 import { classifyStartupFailure, failureMessage } from './failures'
 import { readLogTail, startLogRun, writeLogLine } from './logfiles'
 import { assertCommandAvailable } from './runtime'
-import { type LogLine, type ProcessStatus } from './types'
+import { type FailureCode, type LogLine, type ProcessStatus } from './types'
 
 const MAX_LOG_LINES = 5000
 const EARLY_EXIT_WINDOW_MS = 1200
@@ -120,7 +120,7 @@ export function getProcessStatus(id: string): ProcessStatus {
   return statuses.get(id) ?? stoppedStatus()
 }
 
-export function markProcessFailed(id: string, error: string, exitCode: number | null = null, failureCode: string | null = null) {
+export function markProcessFailed(id: string, error: string, exitCode: number | null = null, failureCode: FailureCode | null = null) {
   setStatus(id, {
     phase: 'failed',
     running: false,

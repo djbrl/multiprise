@@ -293,14 +293,20 @@ multiprise/
 │   │   ├── failures.ts          # Actionable startup error classification
 │   │   ├── ports.ts             # Port inspection and allocation
 │   │   ├── store.ts             # Persistent project/settings storage
+│   │   ├── types.ts             # API types, shared with the CLI and the renderer
 │   │   ├── discovery.ts         # Advertises the running API to the CLI (api.json)
 │   │   ├── cli/                 # `multiprise` CLI and MCP server
 │   └── tsconfig.json
 ├── renderer/
-│   ├── src/App.vue              # Main Vue application
-│   ├── src/components/          # Command palette, log viewer, environment dialog, failure actions
+│   ├── src/App.vue              # Shell: sidebar, current page, dialogs, window events
+│   ├── src/components/          # Pages (home, project, settings), service cards, dialogs, palette, log viewer
+│   ├── src/composables/         # Shared state and actions (projects, services, logs, ports, browser tabs, …)
+│   ├── src/lib/                 # API client, service helpers, browser storage
+│   ├── src/types.ts             # Re-exports the backend's API types, plus interface-only ones
+│   ├── src/theme.ts             # Light and dark theme tokens
 │   ├── src/ui.ts                # Shared button, input, and panel classes
-│   ├── src/style.css            # Tailwind layers and theme tokens
+│   ├── src/style.css            # Tailwind layers, transitions, and shell styles
+│   ├── tsconfig.json            # vue-tsc checks the renderer against the backend types
 │   └── vite.config.js
 ├── backend/test/                # Fixture-driven reliability regressions
 ├── e2e/                         # Playwright tests driving the Electron app
@@ -348,7 +354,7 @@ npm run test:e2e
 
 Playwright drives the Electron app itself, run from source with a throwaway profile and data folder: a new user goes through onboarding, adds a small Node project (the native folder picker is stubbed), launches it, checks that it answers on its port and that its output reaches the log viewer, then stops it. It also opens Settings and the command palette.
 
-GitHub Actions runs both suites on every push and pull request, and keeps the screenshots of a failed end-to-end run as an artifact.
+`npm run typecheck` checks the backend with `tsc` and the renderer with `vue-tsc`; the renderer imports the backend's API types rather than redeclaring them, so a changed response shape fails the check. GitHub Actions runs the type check and both suites on every push and pull request, and keeps the screenshots of a failed end-to-end run as an artifact.
 
 ## Run From Source
 

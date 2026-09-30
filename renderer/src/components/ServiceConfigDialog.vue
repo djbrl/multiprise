@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { apiFetch } from '../lib/api'
+import { type DetectedVariable, type EnvFileStatus, type EnvironmentResponse, type EnvVariable, type ServiceOption } from '../types'
 import { btnPanelIcon, btnPanelPrimary, btnPanelSecondary, inputBase, noScrollbar } from '../ui'
 
 // Edits the variables one service starts with, and which of its project's services start first.
 
-type ServiceOption = { id: string; name: string; project: string }
-type EnvVariable = { key: string; value: string | null; secret: boolean }
-type DetectedVariable = { key: string; example: string; in_env_file: boolean }
-type EnvFileStatus = { example: string | null; has_env: boolean; missing: string[]; variables: DetectedVariable[] }
-type EnvironmentResponse = { variables: EnvVariable[]; links: string[]; env_file: EnvFileStatus }
 // `stored`: the backend already holds a secret value, which is kept unless something is typed.
 // `detected`: declared by the project's .env.example, so the row is always shown.
 type Row = { id: number; key: string; value: string; secret: boolean; stored: boolean; detected: DetectedVariable | null }
@@ -17,7 +14,6 @@ let nextRowId = 0
 const props = defineProps<{
   service: ServiceOption
   services: ServiceOption[]
-  api: (path: string, init?: RequestInit) => Promise<Response>
 }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
 
@@ -47,7 +43,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const response = await props.api(`/api/projects/${props.service.id}/environment`)
+    const response = await apiFetch(`/api/projects/${props.service.id}/environment`)
     if (!response.ok) throw new Error(await readError(response, 'Could not load the environment'))
     const data = (await response.json()) as EnvironmentResponse
     const configured = new Map(data.variables.map((variable) => [variable.key, variable]))
@@ -103,14 +99,14 @@ async function save() {
         value: row.secret && row.stored && !row.value ? null : row.value,
         secret: row.secret
       }))
-    const saved = await props.api(`/api/projects/${props.service.id}/environment`, {
+    const saved = await apiFetch(`/api/projects/${props.service.id}/environment`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ variables })
     })
     if (!saved.ok) throw new Error(await readError(saved, 'Could not save the variables'))
     if ([...links.value].sort().join() !== [...initialLinks.value].sort().join()) {
-      const linked = await props.api(`/api/projects/${props.service.id}`, {
+      const linked = await apiFetch(`/api/projects/${props.service.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ links: links.value })

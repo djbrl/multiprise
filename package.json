@@ -19,10 +19,11 @@
     "build:web": "npm run build:renderer",
     "build:renderer": "vite build --config renderer/vite.config.js",
     "build:backend": "node scripts/clean-backend.mjs && tsc -p backend/tsconfig.json",
+    "typecheck": "tsc -p backend/tsconfig.json --noEmit && vue-tsc -p renderer/tsconfig.json",
     "start": "electron .",
     "package:mac": "npm run generate:icons && npm run build:api && npm run build:web && electron-builder --mac",
     "test:backend": "npm run build:api && node --test backend/test/*.test.cjs",
-    "test": "npm run test:backend && npm run build:web",
+    "test": "npm run typecheck && npm run test:backend && npm run build:web",
     "test:e2e": "npm run build:web && playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {

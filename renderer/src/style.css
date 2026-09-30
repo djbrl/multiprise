@@ -24,3 +24,139 @@ input {
   background: #bfd7fb;
   color: #252527;
 }
+
+/* App shell, shared transitions and surfaces (used across components, so not scoped). */
+
+.app-drag-region {
+  -webkit-app-region: drag;
+}
+
+body.resizing-project-panes,
+body.resizing-project-panes * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.resizing-project-panes .project-split {
+  transition: none !important;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.unfurl-enter-active,
+.unfurl-leave-active {
+  overflow: hidden;
+  transition: max-height 0.18s ease;
+}
+
+.unfurl-enter-from,
+.unfurl-leave-to {
+  max-height: 0;
+}
+
+.unfurl-enter-to,
+.unfurl-leave-from {
+  max-height: 640px;
+}
+
+.project-switch-enter-active,
+.project-switch-leave-active {
+  transition: opacity 0.08s ease, transform 0.1s ease-out;
+}
+
+.project-switch-enter-from {
+  opacity: 0;
+  transform: translateY(3px);
+}
+
+.project-switch-leave-to {
+  opacity: 0;
+  transform: translateY(-2px);
+}
+
+.multiprise-shell,
+.multiprise-shell aside,
+.multiprise-shell section {
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+
+.modal-slide-enter-active,
+.modal-slide-leave-active {
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.modal-slide-enter-from,
+.modal-slide-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.multiprise-shell {
+  background: var(--app-bg);
+}
+
+.multiprise-shell::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background-image:
+    linear-gradient(var(--circuit) 1px, transparent 1px),
+    linear-gradient(90deg, var(--circuit) 1px, transparent 1px);
+  background-position: 0 0;
+  background-size: 44px 44px;
+}
+
+
+.focus-panel {
+  --text: #E7E5E0;
+  --text-muted: #B2B0AA;
+  --text-subtle: #85858C;
+  --text-strong: #FAFAF8;
+  --border: #505050;
+  --hover: #464646;
+  --selection: #464646;
+  --panel-bg: #3B3B3B;
+  --panel-muted: #343434;
+  --ghost-bg: #454545;
+  --ghost-hover: #515151;
+  --ghost-text: #F0EFEB;
+  --input-bg: #2A2A2A;
+  --input-border: #555555;
+  --input-text: #F5F4F0;
+  --input-placeholder: #85858C;
+  --chip-active-bg: #474747;
+  --danger-bg: #4A302D;
+}
+
+.powered-service {
+  background: var(--panel-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-switch-enter-active,
+  .project-switch-leave-active,
+  .multiprise-shell,
+  .multiprise-shell aside,
+  .multiprise-shell section {
+    transition: none !important;
+  }
+}

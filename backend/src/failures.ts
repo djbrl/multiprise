@@ -1,3 +1,5 @@
+import { type FailureCode } from './types'
+
 export type StartupConflict = {
   pid: number
   port?: number
@@ -6,7 +8,7 @@ export type StartupConflict = {
 }
 
 export type StartupFailure = {
-  code: 'missing-build' | 'existing-instance' | 'port-in-use' | 'runtime-missing' | 'dependencies-missing' | 'environment-missing' | 'version-mismatch' | 'unhealthy-response' | 'timeout' | 'early-exit' | 'launch-error'
+  code: Exclude<FailureCode, 'not-responding'>
   message: string
   recovery: string
 }

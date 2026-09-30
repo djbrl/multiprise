@@ -1,3 +1,6 @@
+// Types shared by the backend, the CLI and the renderer (which imports them with
+// `import type`). Keep this file free of runtime imports so the renderer can use it.
+
 export type ProjectKind = 'command' | 'docker_compose'
 export type ServiceRole = 'backend' | 'frontend' | 'service'
 export type CommandSource = 'auto' | 'user'
@@ -45,6 +48,21 @@ export type ContainerState = {
   ports: number[]
 }
 
+// Why a start failed or a running service turned failed (see failures.ts), so the app can offer a fix.
+export type FailureCode =
+  | 'missing-build'
+  | 'existing-instance'
+  | 'port-in-use'
+  | 'runtime-missing'
+  | 'dependencies-missing'
+  | 'environment-missing'
+  | 'version-mismatch'
+  | 'unhealthy-response'
+  | 'timeout'
+  | 'early-exit'
+  | 'launch-error'
+  | 'not-responding'
+
 export type ProcessStatus = {
   phase: ProcessPhase
   running: boolean
@@ -54,8 +72,8 @@ export type ProcessStatus = {
   ready_at?: string | null
   error?: string | null
   exit_code?: number | null
-  // What kind of failure `error` describes (see failures.ts), so the app can offer a fix.
-  failure_code?: string | null
+  // What kind of failure `error` describes.
+  failure_code?: FailureCode | null
   containers?: ContainerState[]
 }
 
@@ -84,6 +102,8 @@ export type LogLine = {
   repeat?: number
 }
 
+export type ThemeName = 'light' | 'dark'
+
 export type Settings = {
   auto_port: boolean
   auto_install: boolean
@@ -99,7 +119,7 @@ export type Settings = {
   startup_timeout_ms: number
   scan_depth: number
   scan_ignore: string[]
-  theme?: string
+  theme: ThemeName
 }
 
 export type ScanResult = {
@@ -210,4 +230,49 @@ export type ProcessKillPayload = {
 
 export type ScanRequestPayload = {
   roots: string[]
+}
+
+// Pushed over /api/events.
+export type AppEvent =
+  // `replace` updates the service's last line in place (its repeat counter grew).
+  | { type: 'log'; id: string; entry: LogLine; replace: boolean }
+  | { type: 'logs-cleared'; id: string }
+  | { type: 'status'; id: string; status: ProcessStatus }
+  | { type: 'projects' }
+
+// A service variable as the environment editor sees it: secret values are never sent back.
+export type EnvVariable = { key: string; value: string | null; secret: boolean }
+
+export type DetectedVariable = {
+  key: string
+  // The value the example file shows (usually a placeholder).
+  example: string
+  // Whether a .env file sets it; its value is never read back to the app.
+  in_env_file: boolean
+}
+
+export type EnvFileStatus = {
+  // The example file found, relative to the service folder.
+  example: string | null
+  has_env: boolean
+  // Variables the example declares that neither an env file nor Multiprise provides.
+  missing: string[]
+  // Every variable the example declares, in its order.
+  variables: DetectedVariable[]
+}
+
+// GET and PUT /api/projects/:id/environment.
+export type EnvironmentResponse = {
+  variables: EnvVariable[]
+  links: string[]
+  env_file: EnvFileStatus
+}
+
+// GET /api/hostnames.
+export type HostnameInfo = {
+  enabled: boolean
+  port: number | null
+  error: string | null
+  // Service id to its stable URL.
+  urls: Record<string, string>
 }

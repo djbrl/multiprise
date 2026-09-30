@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { type FailureCode } from '../types'
 import { spinnerClass } from '../ui'
 
 // A failed service's error with the fixes that apply to its kind of failure.
@@ -8,13 +9,13 @@ export type FailureAction = 'retry' | 'retry-new-port' | 'install' | 'build' | '
 
 const props = defineProps<{
   error: string
-  code?: string | null
+  code?: FailureCode | null
   // The action in progress, if any.
   busy?: FailureAction | null
 }>()
 const emit = defineEmits<{ action: [action: FailureAction] }>()
 
-const ACTIONS: Record<string, Array<{ action: FailureAction; label: string }>> = {
+const ACTIONS: Partial<Record<FailureCode, Array<{ action: FailureAction; label: string }>>> = {
   'port-in-use': [{ action: 'retry-new-port', label: 'Retry on a new port' }],
   'dependencies-missing': [{ action: 'install', label: 'Install dependencies and retry' }],
   'missing-build': [{ action: 'build', label: 'Build and retry' }, { action: 'retry', label: 'Retry' }],
@@ -26,7 +27,7 @@ const ACTIONS: Record<string, Array<{ action: FailureAction; label: string }>> =
 // The existing-instance case has its own "Unplug and retry" prompt in the service card.
 const actions = computed(() => props.code === 'existing-instance'
   ? []
-  : ACTIONS[props.code ?? ''] ?? [{ action: 'retry' as FailureAction, label: 'Retry' }])
+  : (props.code ? ACTIONS[props.code] : undefined) ?? [{ action: 'retry' as FailureAction, label: 'Retry' }])
 
 const pendingLabel: Partial<Record<FailureAction, string>> = {
   install: 'Installing…',

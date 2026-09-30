@@ -5,7 +5,7 @@ import { activeHostnamePort, hostUrls } from './hostnames'
 import { HttpError } from './http'
 import { type AppState } from './state'
 import { dataDir } from './store'
-import { type Project } from './types'
+import { type DetectedVariable, type EnvFileStatus, type EnvVariable, type Project } from './types'
 
 // Per-service environment: plain variables live in projects.json, secret ones are kept
 // encrypted in secrets.json, and values can point at other services with templates.
@@ -68,8 +68,6 @@ export function setSecretStore(store: SecretStore) {
 }
 
 export const secrets = () => secretStore
-
-export type EnvVariable = { key: string; value: string | null; secret: boolean }
 
 // Secret values are never sent back; the editor only learns that one is set.
 export function describeEnvironment(project: Project): EnvVariable[] {
@@ -168,24 +166,6 @@ function envEntries(text: string) {
     entries.push({ key: match[1], value })
   }
   return entries
-}
-
-export type DetectedVariable = {
-  key: string
-  // The value the example file shows (usually a placeholder).
-  example: string
-  // Whether a .env file sets it; its value is never read back to the app.
-  in_env_file: boolean
-}
-
-export type EnvFileStatus = {
-  // The example file found, relative to the service folder.
-  example: string | null
-  has_env: boolean
-  // Variables the example declares that neither an env file nor Multiprise provides.
-  missing: string[]
-  // Every variable the example declares, in its order.
-  variables: DetectedVariable[]
 }
 
 // A service folder (or its project root) with a .env.example but no .env usually will not start.

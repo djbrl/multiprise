@@ -1,16 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { type LogLine } from '../types'
 import { inputBase, noScrollbar } from '../ui'
 
 // The merged log of a project's services: search, filters, pause/follow, and links for
 // URLs and file:line references.
 
-export type LogEntry = {
-  seq: number
-  timestamp: string
-  stream: 'stdout' | 'stderr'
-  line: string
-  repeat?: number
+export type LogEntry = LogLine & {
   serviceId: string
   serviceName: string
   role: string
