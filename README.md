@@ -33,15 +33,34 @@ Multiprise also works from a terminal and from coding agents. Choose **Install C
 multiprise ls                  # every project and service, with status and URL
 multiprise up                  # start the project containing this folder, backend first
 multiprise up shop/api         # or name a project, a service, project/service, or a folder
-multiprise logs web -f         # follow a service's output
+multiprise logs web -f         # follow a service's output; `logs shop` interleaves a whole project
 multiprise url web             # print its URL, e.g. open "$(multiprise url web)"
 multiprise restart api
 multiprise down
 ```
 
-`up` and `restart` wait until each service accepts connections, give it the same port it had last time when that port is free, and hand `BACKEND_PORT`/`FRONTEND_PORT` to its siblings, exactly like the app's buttons. `ls`, `up`, `down`, `restart` and `url` accept `--json`. The CLI talks to the running app and opens it if needed.
+Everything the app does is available too, so an agent can run Multiprise from a terminal alone:
 
-`multiprise mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so coding agents reuse the services you already run instead of starting duplicates on random ports. It provides `list_services`, `start_service`, `stop_service`, `restart_service`, `tail_logs` and `get_url`. For Claude Code:
+```bash
+multiprise add ~/code/shop --dry-run          # see the services that would be found, then add without --dry-run
+multiprise info web                           # status, command, port, last error, variables, dependencies
+multiprise command web -- pnpm dev --host     # set the start command; --auto restores the detected one
+multiprise port api 4000                      # preferred port; --clear lets Multiprise choose
+multiprise env web set API_URL={{services.api.url}}
+multiprise env api set STRIPE_KEY=sk_test_… --secret   # kept in the Keychain, never printed
+multiprise deps web add api                   # api starts before web
+multiprise logs shop --grep error --stream stderr
+multiprise ps api && multiprise kill api      # free a port held by a stray process
+multiprise prepare web install                # install dependencies (or build)
+multiprise settings set auto_restart=off
+multiprise remove old-project --yes           # stop tracking; the folder is not touched
+multiprise events                             # status changes and log lines as JSON lines
+multiprise api GET /api/projects              # any other API call
+```
+
+`multiprise help` lists every command and `multiprise help <command>` explains one. `up` and `restart` wait until each service accepts connections, give it the same port it had last time when that port is free, and hand `BACKEND_PORT`/`FRONTEND_PORT` to its siblings, exactly like the app's buttons. Every command that prints data accepts `--json`. The CLI talks to the running app and opens it if needed.
+
+`multiprise mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so coding agents reuse the services you already run instead of starting duplicates on random ports. Its tools cover the same ground: `list_services`, `start_service`, `stop_service`, `restart_service`, `tail_logs` (a service or a whole project, with a text filter), `get_url`, `get_service`, `add_project`, `remove_project`, `configure_service`, `set_environment`, `set_dependencies`, `list_ports`, `list_processes`, `kill_process`, `prepare_service`, `get_settings` and `update_settings`. For Claude Code:
 
 ```bash
 claude mcp add multiprise -- multiprise mcp
@@ -345,7 +364,7 @@ Run the launch-pipeline regression suite with:
 npm run test:backend
 ```
 
-The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Service links and environments are tested end to end: link validation and loops, dependencies starting first with their sibling ports, templates, secrets that are never returned or written to `projects.json`, invalid variables, `.env.example` warnings, and settings surviving a restart. The hostname proxy is tested end to end: naming rules, proxied requests with their headers, WebSocket upgrades, IPv6-only servers, error pages, foreign hosts, and a taken port. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. 
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Service links and environments are tested end to end: link validation and loops, dependencies starting first with their sibling ports, templates, secrets that are never returned or written to `projects.json`, invalid variables, `.env.example` warnings, and settings surviving a restart. The hostname proxy is tested end to end: naming rules, proxied requests with their headers, WebSocket upgrades, IPv6-only servers, error pages, foreign hosts, and a taken port. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, adding and untracking projects, commands, ports, variables and secrets, dependencies, settings, merged and filtered logs, and the MCP tool calls over stdio. 
 ### End-to-end tests
 
 ```bash

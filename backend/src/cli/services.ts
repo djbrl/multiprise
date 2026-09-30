@@ -336,3 +336,13 @@ export async function getLogs(client: MultipriseClient, service: Service, lines 
 
 export const formatLogLine = (entry: LogLine) =>
   entry.repeat && entry.repeat > 1 ? `${entry.line}  (×${entry.repeat})` : entry.line
+
+export type ServiceLogLine = LogLine & { service: string }
+
+// A project's services interleaved in the order they printed (sequence numbers are global).
+export async function getMergedLogs(client: MultipriseClient, services: Service[], lines = 100): Promise<ServiceLogLine[]> {
+  const perService = await Promise.all(services.map(async (service) =>
+    (await getLogs(client, service, lines)).map((entry) => ({ ...entry, service: qualifiedName(service) }))
+  ))
+  return perService.flat().sort((a, b) => a.seq - b.seq).slice(-lines)
+}

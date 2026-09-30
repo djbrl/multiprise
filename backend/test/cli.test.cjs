@@ -15,6 +15,14 @@ const { resolveTarget, resolveService, resolveCurrentProject, UsageError } = req
 
 const CLI = path.join(__dirname, '..', 'dist', 'cli', 'index.js')
 
+// Secrets normally go to the macOS Keychain through Electron; tests keep them in memory.
+const secretValues = new Map()
+require('../dist/environment.js').setSecretStore({
+  get: async (id, key) => secretValues.get(`${id}:${key}`) ?? null,
+  set: async (id, key, value) => { secretValues.set(`${id}:${key}`, value) },
+  remove: async (id, key) => { for (const name of [...secretValues.keys()]) if (name.startsWith(`${id}:${key ?? ''}`)) secretValues.delete(name) }
+})
+
 // Each test gets its own saved projects; the CLI finds the server through this folder.
 async function startAdvertisedServer(context) {
   process.env.MULTIPRISE_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'multiprise-cli-data-'))
@@ -180,7 +188,11 @@ test('the MCP server exposes the service tools and answers over stdio', async (c
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
 
   const tools = (await rpc('tools/list')).result.tools.map((tool) => tool.name)
-  assert.deepEqual(tools, ['list_services', 'start_service', 'stop_service', 'restart_service', 'tail_logs', 'get_url'])
+  assert.deepEqual(tools, [
+    'list_services', 'start_service', 'stop_service', 'restart_service', 'tail_logs', 'get_url', 'get_service', 'add_project',
+    'remove_project', 'configure_service', 'set_environment', 'set_dependencies', 'list_ports', 'list_processes', 'kill_process',
+    'prepare_service', 'get_settings', 'update_settings'
+  ])
 
   const started = JSON.parse((await call('start_service', { service: path.basename(root) })).content[0].text)
   assert.deepEqual(started.map((entry) => [entry.name.split('/').pop(), entry.outcome, entry.status]), [['api', 'started', 'ready'], ['web', 'started', 'ready']])
@@ -196,10 +208,116 @@ test('the MCP server exposes the service tools and answers over stdio', async (c
   assert.equal((await rpc('tools/call', { name: 'rm_rf', arguments: {} })).error.code, -32602)
   assert.equal((await rpc('resources/list')).error.code, -32601)
 
+  const project = path.basename(root)
+  const configured = JSON.parse((await call('set_environment', { service: `${project}/web`, set: { API_URL: '{{services.api.url}}', TOKEN: 's3cret' }, secret: false })).content[0].text)
+  assert.deepEqual(configured.variables.map((variable) => variable.key), ['API_URL', 'TOKEN'])
+  await call('set_environment', { service: `${project}/web`, unset: ['TOKEN'] })
+  await call('set_dependencies', { service: `${project}/web`, depends_on: ['api'] })
+  await call('configure_service', { service: `${project}/web`, command: 'node server.js' })
+  const details = JSON.parse((await call('get_service', { service: `${project}/web` })).content[0].text)
+  assert.equal(details.command, 'node server.js')
+  assert.equal(details.command_source, 'user')
+  assert.deepEqual(details.depends_on, [`${project}/api`])
+  assert.deepEqual(details.variables, [{ key: 'API_URL', value: '{{services.api.url}}', secret: false }])
+  const preview = JSON.parse((await call('add_project', { folder: root, dry_run: true })).content[0].text)
+  assert.deepEqual(preview[0].services.map((entry) => entry.name).sort(), ['api', 'web'])
+  const badSetting = await call('update_settings', { settings: { colour: 'blue' } })
+  assert.equal(badSetting.isError, true)
+  assert.match(logs.content[0].text, /api ready/)
+  const merged = await call('tail_logs', { service: project, grep: 'ready' })
+  assert.match(merged.content[0].text, /\[.*api\] api ready/)
+
   const stopped = JSON.parse((await call('stop_service', { service: root })).content[0].text)
   assert.deepEqual(stopped.map((entry) => entry.outcome), ['stopped', 'stopped'])
 
   child.stdin.end()
   const code = await new Promise((resolve) => child.on('exit', resolve))
   assert.equal(code, 0)
+})
+
+test('the CLI configures services, projects and settings end to end', async (context) => {
+  await startAdvertisedServer(context)
+  const root = await twoServiceProject()
+  const project = path.basename(root)
+  const cli = async (...args) => {
+    const result = await runCli(args, { cwd: os.tmpdir() })
+    return { ...result, json: () => JSON.parse(result.stdout) }
+  }
+  const ok = async (...args) => {
+    const result = await cli(...args)
+    assert.equal(result.code, 0, `multiprise ${args.join(' ')}\n${result.stderr}\n${result.stdout}`)
+    return result
+  }
+
+  // Adding: a dry run saves nothing, then the folder is tracked once.
+  const preview = (await ok('add', root, '--dry-run', '--json')).json()
+  assert.deepEqual(preview[0].services.map((entry) => entry.name).sort(), ['api', 'web'])
+  assert.deepEqual((await ok('ls', '--json')).json(), [])
+  const added = (await ok('add', root, '--json')).json()
+  assert.deepEqual(added[0].services.sort(), ['api', 'web'])
+  const again = await cli('add', root)
+  assert.equal(again.code, 1)
+  assert.match(again.stdout, /already exists/)
+
+  // Command, port, environment and dependencies of one service.
+  assert.equal((await ok('command', `${project}/web`, '--', 'node', 'server.js', '--verbose')).stdout.trim(), 'node server.js --verbose  (set by you)')
+  assert.match((await ok('command', `${project}/web`, '--auto')).stdout, /npm run dev.*\(detected\)/)
+  assert.equal((await ok('port', `${project}/api`, '4567', '--json')).json().port, 4567)
+  assert.equal((await ok('port', `${project}/api`, '--clear', '--json')).json().port, null)
+  assert.equal((await cli('port', `${project}/api`, '70000')).code, 2)
+
+  await ok('env', `${project}/web`, 'set', 'API_URL={{services.api.url}}', 'MODE=a=b')
+  await ok('env', `${project}/web`, 'set', 'TOKEN=hunter2', '--secret')
+  const env = (await ok('env', `${project}/web`, '--json')).json()
+  assert.deepEqual(env.variables, [
+    { key: 'API_URL', value: '{{services.api.url}}', secret: false },
+    { key: 'MODE', value: 'a=b', secret: false },
+    { key: 'TOKEN', value: null, secret: true }
+  ])
+  assert.doesNotMatch((await ok('env', `${project}/web`)).stdout, /hunter2/)
+  await ok('env', `${project}/web`, 'unset', 'MODE')
+  assert.equal((await cli('env', `${project}/web`, 'unset', 'NOPE')).code, 2)
+  assert.equal((await cli('env', `${project}/web`, 'set', '1BAD=x')).code, 2)
+
+  assert.deepEqual((await ok('deps', `${project}/web`, 'add', 'api', '--json')).json().depends_on, [`${project}/api`])
+  assert.match((await cli('deps', `${project}/api`, 'add', 'web')).stderr, /loop/)
+  assert.deepEqual((await ok('deps', `${project}/web`, 'clear', '--json')).json().depends_on, [])
+  await ok('deps', `${project}/web`, 'set', 'api')
+
+  const info = (await ok('info', `${project}/web`, '--json')).json()
+  assert.equal(info.name, `${project}/web`)
+  assert.deepEqual(info.depends_on, [`${project}/api`])
+  assert.deepEqual(info.variables.map((variable) => variable.key), ['API_URL', 'TOKEN'])
+
+  // Logs read the whole project, interleaved and filtered.
+  await ok('up', project)
+  const logs = (await ok('logs', project, '--grep', 'ready', '--json')).json()
+  assert.deepEqual(logs.map((entry) => [entry.service, entry.line]), [[`${project}/api`, 'api ready']])
+  assert.equal((await ok('ps', `${project}/api`, '--json')).json()[0].source, 'managed')
+  assert.ok((await ok('ports', '--json')).json().some((entry) => entry.source === 'managed'))
+  assert.equal((await cli('kill', `${project}/api`)).code, 1)
+  await ok('down', project)
+
+  // Settings take typed values and reject unknown names.
+  const settings = (await ok('settings', 'set', 'auto_restart=off', 'startup_timeout_ms=25000', 'scan_ignore=dist, build', '--json')).json()
+  assert.equal(settings.auto_restart, false)
+  assert.equal(settings.startup_timeout_ms, 25000)
+  assert.deepEqual(settings.scan_ignore, ['dist', 'build'])
+  assert.equal((await cli('settings', 'set', 'colour=blue')).code, 2)
+  assert.equal((await ok('api', 'GET', '/api/settings')).json().auto_restart, false)
+
+  // Renaming, then untracking, which needs --yes without a terminal.
+  await ok('rename', `${project}/web`, 'storefront')
+  assert.ok((await ok('ls', '--json')).json()[0].services.some((entry) => entry.name === 'storefront'))
+  const unconfirmed = await cli('remove', project)
+  assert.equal(unconfirmed.code, 2)
+  assert.match(unconfirmed.stderr, /--yes/)
+  assert.deepEqual((await ok('remove', project, '--yes', '--json')).json().removed.sort(), [`${project}/api`, `${project}/storefront`])
+  assert.deepEqual((await ok('ls', '--json')).json(), [])
+
+  // Help lists every command, and each has its own page.
+  const help = await ok('help')
+  for (const command of ['add', 'remove', 'env', 'deps', 'settings', 'kill', 'events', 'api']) assert.match(help.stdout, new RegExp(`\\n  ${command} `))
+  assert.match((await ok('help', 'env')).stdout, /services\.api\.url/)
+  assert.equal((await cli('frobnicate')).code, 2)
 })
