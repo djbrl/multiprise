@@ -22,12 +22,14 @@
     "start": "electron .",
     "package:mac": "npm run generate:icons && npm run build:api && npm run build:web && electron-builder --mac",
     "test:backend": "npm run build:api && node --test backend/test/*.test.cjs",
-    "test": "npm run test:backend && npm run build:web"
+    "test": "npm run test:backend && npm run build:web",
+    "test:e2e": "npm run build:web && playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {
     "express": "^4.22.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/express": "^4.17.21",
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^6.0.8",
@@ -39,7 +41,8 @@
     "tsx": "^4.23.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.6",
-    "vue": "^3.5.40"
+    "vue": "^3.5.40",
+    "vue-tsc": "^3.3.11"
   },
   "description": "A local desktop control center for launching projects, assigning ports, viewing logs, and browsing running services.",
   "author": "Djbrl",

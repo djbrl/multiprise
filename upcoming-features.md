@@ -43,4 +43,4 @@ Ordered by priority within each section. Check items off as they land.
 - [ ] Split `renderer/src/App.vue` into composables (`useProjects`, `useLogs`, `useBrowserTabs`) and components.
 - [x] Split `backend/src/server.ts` into route modules.
 - [ ] Share types between backend and renderer instead of redeclaring them.
-- [ ] Playwright end-to-end tests driving the Electron app (add project → launch → ready → stop) in CI.
+- [x] Playwright end-to-end tests driving the Electron app (add project → launch → ready → stop) in CI.

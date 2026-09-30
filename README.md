@@ -303,6 +303,7 @@ multiprise/
 │   ├── src/style.css            # Tailwind layers and theme tokens
 │   └── vite.config.js
 ├── backend/test/                # Fixture-driven reliability regressions
+├── e2e/                         # Playwright tests driving the Electron app
 ├── brand/                       # Logo and icon sources; see brand/README.md
 ├── .github/workflows/ci.yml     # Build and reliability checks
 ├── scripts/dev.mjs              # Portable development launcher
@@ -338,7 +339,16 @@ Run the launch-pipeline regression suite with:
 npm run test:backend
 ```
 
-The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Service links and environments are tested end to end: link validation and loops, dependencies starting first with their sibling ports, templates, secrets that are never returned or written to `projects.json`, invalid variables, `.env.example` warnings, and settings surviving a restart. The hostname proxy is tested end to end: naming rules, proxied requests with their headers, WebSocket upgrades, IPv6-only servers, error pages, foreign hosts, and a taken port. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. GitHub Actions runs this suite plus the renderer production build on every push and pull request.
+The tests cover development-script scoring, `packageManager` precedence, Vite port flags, missing-build preparation, delayed readiness, early exits, actionable error classification, command ownership, and discovery fixtures for Vue/Vite, React/Vite, Next.js, NestJS, pnpm/Turbo, Yarn/Nx, Bun, Cargo, and Docker Compose. They also cover the API guard (token, origin, and host checks), malformed input, atomic state writes, concurrent launches, cancelling a launch during its build, stopping every service on shutdown, and Node `engines` ranges. Service links and environments are tested end to end: link validation and loops, dependencies starting first with their sibling ports, templates, secrets that are never returned or written to `projects.json`, invalid variables, `.env.example` warnings, and settings surviving a restart. The hostname proxy is tested end to end: naming rules, proxied requests with their headers, WebSocket upgrades, IPv6-only servers, error pages, foreign hosts, and a taken port. Docker Compose state is tested against a stand-in `docker` command: both `ps` output formats, container states, changes made outside the app, Docker becoming unavailable, and log streaming. Supervision is covered too: crash restarts on the same port, the restart limit, Stop cancelling a pending restart, and hang detection and recovery. The CLI and MCP server are tested end to end: name resolution, API discovery and stale discovery files, backend-first project launches with linked ports, and the MCP tool calls over stdio. 
+### End-to-end tests
+
+```bash
+npm run test:e2e
+```
+
+Playwright drives the Electron app itself, run from source with a throwaway profile and data folder: a new user goes through onboarding, adds a small Node project (the native folder picker is stubbed), launches it, checks that it answers on its port and that its output reaches the log viewer, then stops it. It also opens Settings and the command palette.
+
+GitHub Actions runs both suites on every push and pull request, and keeps the screenshots of a failed end-to-end run as an artifact.
 
 ## Run From Source
 
