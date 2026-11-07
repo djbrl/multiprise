@@ -29,6 +29,7 @@ const brandPngs = [
 const copies = [
   ['icon.svg', path.join('renderer', 'src', 'assets', 'multiprise-icon.svg')],
   ['icon-flat.svg', path.join('site', 'icon.svg')],
+  ['lockup.svg', path.join('site', 'lockup.svg')],
   [path.join('png', 'apple-touch-icon.png'), path.join('site', 'apple-touch-icon.png')],
   [path.join('png', 'social-card.png'), path.join('site', 'og.png')],
   [path.join('png', 'social-card.png'), path.join('.github', 'social-preview.png')]

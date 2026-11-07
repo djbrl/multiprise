@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multiprise</title>
+<meta name="description" content="Multiprise is an open source Mac app that finds the services in your project folders, launches them on free ports, and keeps every log in one stream.">
+<meta property="og:title" content="Multiprise: run every local project from one place">
+<meta property="og:description" content="Launch your local projects, give every service its own port, and keep every log in one stream. Open source, for macOS.">
+<meta property="og:image" content="https://multiprise.vercel.app/og.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="The multiprise logo: a wall socket with a shell prompt, next to the name">
+<meta property="og:url" content="https://multiprise.vercel.app/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#fcfcfb">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://api.fontshare.com">
+<!-- One <link> per family: combined Fontshare requests can silently drop a family. -->
+<link href="https://api.fontshare.com/v2/css?f[]=general-sans@500,600&display=swap" rel="stylesheet">
+<link href="https://api.fontshare.com/v2/css?f[]=switzer@400,500&display=swap" rel="stylesheet">
+<link href="https://api.fontshare.com/v2/css?f[]=jet-brains-mono@400,500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #fcfcfb;
+  --surface: #f4f4f2;
+  --text: #1c1917;      /* brand Ink */
+  --muted: #6b6f76;
+  --faint: #a5a7ab;
+  --line: rgba(28, 25, 23, .09);
+  --live: #ea580c;      /* brand Orange: a running service */
+  --live-soft: rgba(234, 88, 12, .12);
+  --error: #e5484d;     /* a port someone else holds, at the moment it is refused */
+  --display: "General Sans", -apple-system, system-ui, sans-serif;
+  --body: "Switzer", -apple-system, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(.2, .7, .1, 1);
+  --w: 1200px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 400 16px/1.55 var(--body); -webkit-font-smoothing: antialiased; overflow-x: clip; }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3 { font-family: var(--display); font-weight: 500; margin: 0; letter-spacing: -0.028em; text-wrap: balance; }
+p { margin: 0; text-wrap: pretty; }
+code { font-family: var(--mono); }
+.wrap { max-width: var(--w); margin: 0 auto; padding: 0 32px; }
+section { position: relative; }
+[hidden] { display: none !important; }
+
+/* ---------- Windows band + waitlist (SITE.windows): under the header, folds away on scroll ---------- */
+.band { position: fixed; top: 60px; left: 0; right: 0; z-index: 49; background: #f1f1ef; border-bottom: 1px solid var(--line); color: var(--muted); font: 400 14px var(--body); transition: transform .35s var(--ease); }
+.band-row { min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 10px 14px; padding: 6px 16px; flex-wrap: wrap; text-align: center; }
+.band b { color: var(--text); font-weight: 500; }
+.band-cta { border: 0; background: none; padding: 0; font: 500 14px var(--body); color: var(--live); cursor: pointer; white-space: nowrap; }
+.band-cta::after { content: " →"; }
+.band-cta:hover { text-decoration: underline; text-underline-offset: 3px; }
+.band input[type=email] { height: 32px; width: min(260px, 60vw); border-radius: 8px; border: 1px solid rgba(28,25,23,.18); background: #fff; padding: 0 12px; font: 14px var(--body); color: var(--text); outline: none; }
+.band input[type=email]:focus { border-color: var(--live); box-shadow: 0 0 0 3px var(--live-soft); }
+.band-submit { height: 32px; border: 0; border-radius: 8px; padding: 0 14px; background: var(--text); color: #fff; font: 500 14px var(--body); cursor: pointer; }
+.band-submit:disabled { opacity: .5; cursor: default; }
+.band-x { border: 0; background: none; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 4px; }
+.band-fine { flex-basis: 100%; font-size: 12px; color: var(--faint); margin-top: -4px; }
+.band-err { color: var(--error); font-size: 13px; padding: 0 16px 8px; text-align: center; margin: 0; }
+.band .hp, .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+body.scrolled .band:not(.open) { transform: translateY(-100%); }
+@media (max-width: 640px) { .band-more { display: none; } }
+
+/* ---------- nav ---------- */
+nav { position: fixed; inset: 0 0 auto; z-index: 50; height: 60px; background: rgba(252,252,251,.8); backdrop-filter: saturate(180%) blur(16px); -webkit-backdrop-filter: saturate(180%) blur(16px); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; align-items: center; gap: 30px; height: 100%; }
+/* brand/lockup.svg, outlined: the wordmark is never retyped */
+.logo { display: flex; align-items: center; }
+.logo img { height: 24px; width: auto; display: block; }
+nav .links { display: flex; gap: 26px; margin-left: auto; font-size: 14px; color: var(--muted); }
+nav .links a:hover { color: var(--text); }
+
+/* ---------- buttons ---------- */
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 999px; background: var(--text); color: #fff; font: 500 15px var(--body); white-space: nowrap; transition: background .2s; }
+.btn:hover { background: #33302d; }
+.btn svg { width: 14px; height: 14px; fill: currentColor; }
+.btn.small { height: 32px; padding: 0 14px; font-size: 13px; }
+.btn.small svg { width: 11px; height: 11px; }
+.btn.big { height: 48px; padding: 0 24px; font-size: 16px; }
+.btn.pending { background: #d9dadc; pointer-events: none; }
+.link { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; color: var(--text); white-space: nowrap; }
+.link::after { content: "→"; transition: transform .2s var(--ease); }
+.link:hover::after { transform: translateX(3px); }
+
+/* ---------- shared section heads ---------- */
+.fhead { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+.fhead h2 { font-size: clamp(34px, 3.9vw, 54px); line-height: 1.02; }
+.fhead p { font-size: clamp(17px, 1.6vw, 21px); line-height: 1.45; color: var(--muted); max-width: 34ch; }
+.fhead p b { color: var(--text); font-weight: 500; }
+.feature { padding: 120px 0 130px; border-top: 1px solid var(--line); }
+.frame { border-radius: 12px; overflow: hidden; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 24px 60px -30px rgba(28,25,23,.25); }
+.frame img { display: block; width: 100%; height: auto; }
+.frame .ph, .shot .ph { aspect-ratio: 16 / 10.25; display: grid; place-items: center; color: var(--faint); font-size: 14px; background: var(--surface); }
+.panel { background: #fff; border-radius: 16px; box-shadow: 0 0 0 1px var(--line), 0 30px 70px -40px rgba(28,25,23,.3); }
+
+/* pinned scroll scenes */
+.scene { border-top: 1px solid var(--line); }
+.stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; display: flex; flex-direction: column; justify-content: center; padding-top: 60px; }
+.stage > .wrap { width: 100%; }  /* auto margins would otherwise shrink it to its content */
+
+/* ---------- hero ---------- */
+#hero { height: 190vh; }
+.hero-stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; display: flex; flex-direction: column; padding-top: 130px; }
+.hero-head { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 24px 48px; }
+.hero-head h1 { font-size: clamp(42px, 5.6vw, 76px); line-height: 1.02; max-width: 19ch; }
+.hero-head .lede { margin-top: 22px; font-size: clamp(17px, 1.5vw, 19px); color: var(--muted); max-width: 46ch; }
+.hero-head .btn { margin-bottom: 6px; }
+.shot-wrap { position: relative; margin-top: 56px; perspective: 1600px; flex: 1; }
+.shot-glow { position: absolute; left: 50%; top: 14%; width: 92%; height: 90%; transform: translateX(-50%); background: radial-gradient(60% 55% at 50% 40%, rgba(234,88,12,.14), rgba(234,88,12,0) 70%), radial-gradient(70% 70% at 50% 60%, rgba(28,25,23,.08), transparent 70%); filter: blur(30px); pointer-events: none; }
+.shot { position: relative; transform-origin: 50% 0; will-change: transform; border-radius: 14px; overflow: hidden; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 30px 80px -30px rgba(28,25,23,.28), 0 12px 24px -12px rgba(28,25,23,.12); }
+.shot img { display: block; width: 100%; height: auto; }
+
+/* ---------- statement ---------- */
+.statement { padding: 150px 0 140px; }
+.statement p { font: 500 clamp(28px, 3.3vw, 44px)/1.18 var(--display); letter-spacing: -0.025em; color: var(--faint); max-width: 30ch; }
+.statement p b { font-weight: 500; color: var(--text); }
+
+/* ---------- ideas: one at a time, each visual plays out with scroll ---------- */
+#ideas { height: 360vh; }
+.ideas { display: grid; grid-template-columns: .9fr 1.1fr; gap: 64px; align-items: center; }
+.ideas-text { position: relative; min-height: 260px; display: flex; }
+.rail { display: flex; flex-direction: column; gap: 8px; margin-right: 36px; padding-top: 10px; }
+.rail i { display: block; width: 2px; height: 64px; background: var(--line); border-radius: 2px; overflow: hidden; position: relative; }
+.rail i b { position: absolute; inset: 0; background: var(--text); transform-origin: top; transform: scaleY(0); }
+.idea { position: absolute; left: 38px; right: 0; top: 0; opacity: 0; will-change: opacity, transform; }
+.idea h2 { font-size: clamp(34px, 3.9vw, 54px); line-height: 1.02; }
+.idea p { margin-top: 20px; font-size: clamp(17px, 1.6vw, 21px); color: var(--muted); max-width: 30ch; }
+.ideas-art { position: relative; height: min(440px, 58vh); }
+.viz { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; opacity: 0; will-change: opacity, transform; }
+[data-step] { opacity: 0; transform: translateY(8px); transition: opacity .45s var(--ease), transform .45s var(--ease); }
+[data-step].on { opacity: 1; transform: none; }
+
+/* beat 1: manifests resolve into services */
+.manifest { padding: 22px 24px; font: 13px/1.7 var(--mono); }
+.manifest .dir { color: var(--muted); }
+.manifest .file { margin-top: 12px; padding-left: 14px; border-left: 1px solid var(--line); }
+.manifest .path { display: block; color: var(--text); font-weight: 500; }
+.manifest .line { display: block; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.manifest .line.pick { color: var(--text); }
+.manifest .line.pick::before { content: "›"; color: var(--live); margin: 0 6px 0 -12px; }
+.manifest .line.skip { text-decoration: line-through; text-decoration-color: var(--faint); opacity: .6; }
+.found { margin-top: 18px; display: grid; gap: 8px; }
+.svc-row { display: grid; grid-template-columns: 14px 70px 1fr auto; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px; background: var(--surface); font: 13px var(--mono); }
+.svc-row i { width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 4px var(--live-soft); }
+.svc-row b { font-weight: 500; }
+.svc-row code { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.svc-row span { font: 12px var(--body); color: var(--muted); }
+
+/* beat 2: brand sockets light up with their ports */
+.plate { display: flex; justify-content: space-around; align-items: center; gap: 12px; padding: 30px 28px; border-radius: 999px; }
+.sock { display: grid; justify-items: center; gap: 12px; color: #c9c7c4; transition: color .4s; }
+.sock svg { width: clamp(64px, 7vw, 92px); height: auto; display: block; }
+.sock .cur { opacity: 1; }
+.sock.on { color: var(--live); }
+.sock.on .cur { animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.sock small { font: 500 13px var(--mono); color: var(--faint); transition: color .4s; white-space: nowrap; }
+.sock.on small { color: var(--text); }
+.sock small em { font-style: normal; color: var(--muted); }
+
+/* beat 3: every service's output in one stream */
+.stream { background: #1c1917; color: #e7e5e4; border-radius: 16px; padding: 18px 20px; font: 13px/1.9 var(--mono); box-shadow: 0 30px 70px -40px rgba(28,25,23,.5); overflow: hidden; }
+.stream div { display: grid; grid-template-columns: 44px 1fr; gap: 12px; white-space: nowrap; }
+.stream div span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.stream .api { color: #fb923c; }
+.stream .web { color: #7dd3c0; }
+.stream .warn { color: #f5c26b; }
+.stream .ok { color: #9fd89b; }
+
+/* ---------- discovery ---------- */
+.fvis { margin-top: 72px; position: relative; }
+.frame.dialog { max-width: 900px; margin: 0 auto; border-radius: 16px; }
+.tokens { margin-top: 48px; text-align: center; color: var(--muted); font-size: 15px; }
+.tokens code { font-size: 13px; color: var(--text); padding: 3px 8px; border-radius: 6px; background: var(--surface); margin: 0 2px; white-space: nowrap; line-height: 2.2; }
+
+/* ---------- ports: services find free ports on their rails, then get wired ---------- */
+#ports { height: 300vh; }
+.lanes { position: relative; margin-top: 64px; }
+.lane { display: grid; grid-template-columns: 110px 1fr; align-items: center; height: 108px; }
+.lane > span { font-size: 14px; color: var(--muted); }
+.track-rail { position: relative; height: 100%; }
+.axisline { position: absolute; top: 50%; height: 1px; background: rgba(28,25,23,.14); }
+.range { position: absolute; top: calc(50% - 5px); height: 10px; border-radius: 5px; background: var(--surface); box-shadow: inset 0 0 0 1px rgba(28,25,23,.1); }
+.scale { position: relative; height: 22px; margin-left: 110px; }
+.scale span { position: absolute; transform: translateX(-50%); font: 11px var(--mono); color: var(--faint); }
+.scale i { position: absolute; top: 2px; width: 10px; height: 10px; transform: translateX(-50%); color: var(--faint); font: 11px var(--mono); font-style: normal; }
+.taken { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 10px; height: 10px; border-radius: 50%; background: #b9bbbf; transition: background .25s, box-shadow .25s; }
+.taken small { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); font: 11px var(--mono); color: var(--faint); white-space: nowrap; transition: color .25s; }
+.taken.refuse { background: var(--error); box-shadow: 0 0 0 6px rgba(229,72,77,.15); }
+.taken.refuse small { color: var(--error); }
+.chip { position: absolute; top: 50%; left: 0; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; background: #fff; box-shadow: 0 0 0 1px rgba(28,25,23,.14), 0 10px 24px -12px rgba(28,25,23,.3); font: 500 15px var(--mono); white-space: nowrap; opacity: 0; transition: background .3s, color .3s, box-shadow .3s; z-index: 2; }
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: #c9c7c4; transition: background .3s; }
+.chip em { font-style: normal; color: var(--muted); max-width: 0; overflow: hidden; transition: max-width .4s var(--ease); }
+.chip.docked { box-shadow: 0 0 0 1.5px var(--live), 0 10px 24px -12px rgba(234,88,12,.5); }
+.chip.docked i { background: var(--live); }
+.chip.docked em { max-width: 60px; }
+.wire2 { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 1; }
+.wire2 path { fill: none; stroke: var(--live); stroke-width: 1.5; stroke-dasharray: 1; stroke-dashoffset: 1; }
+.wire2 .flow { stroke-width: 2.5; stroke-dasharray: .12 .88; stroke-dashoffset: 0; opacity: 0; animation: flow 1.6s linear infinite; }
+.wire2.on .flow { opacity: 1; }
+@keyframes flow { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.env { margin: 40px 0 0 110px; font: 15px/2.1 var(--mono); }
+.env div { white-space: nowrap; opacity: 0; transform: translateY(6px); transition: opacity .45s var(--ease), transform .45s var(--ease); }
+.env div.on { opacity: 1; transform: none; }
+.env .k { color: var(--muted); }
+
+/* ---------- pairs of screenshots: the second slides over the first ---------- */
+.pair { overflow-x: clip; }  /* the second shot starts off to the right before sliding in */
+.pair .fvis { height: clamp(360px, 52vw, 640px); }
+.pair .frame { position: absolute; width: 74%; will-change: transform; }
+.pair .frame.a { left: 0; top: 0; }
+.pair .frame.b { right: 0; top: 16%; }
+
+/* ---------- command line + MCP (SITE.features.cli) ---------- */
+.term { border-radius: 14px; background: #1c1917; color: #e7e5e4; padding: 26px 30px; font: 14px/2 var(--mono); overflow-x: auto; box-shadow: 0 30px 70px -40px rgba(28,25,23,.5); }
+#cli .term { margin-top: 72px; }
+#cli .term div { white-space: pre; opacity: 0; transition: opacity .4s var(--ease); }
+#cli .term.in div { opacity: 1; }
+.term .p { color: var(--live); }
+.term .c { color: #8a8580; }
+#cli .term.in div:nth-child(2) { transition-delay: .25s; } #cli .term.in div:nth-child(3) { transition-delay: .5s; } #cli .term.in div:nth-child(4) { transition-delay: .75s; }
+#cli .term.in div:nth-child(5) { transition-delay: 1s; } #cli .term.in div:nth-child(6) { transition-delay: 1.25s; } #cli .term.in div:nth-child(7) { transition-delay: 1.5s; }
+
+/* ---------- privacy: four statements, one after another ---------- */
+.claims { margin-top: 72px; }
+.claims p { font: 500 clamp(26px, 3vw, 40px)/1.2 var(--display); letter-spacing: -0.022em; color: var(--faint); padding: 22px 0; border-top: 1px solid var(--line); }
+.claims p:last-child { border-bottom: 1px solid var(--line); }
+.claims p b { color: var(--text); font-weight: 500; }
+
+/* ---------- get it early: two ways, one switch ---------- */
+.get { margin-top: 72px; max-width: 760px; }
+.seg { display: inline-flex; padding: 4px; border-radius: 999px; background: var(--surface); gap: 2px; }
+.seg button { border: 0; background: transparent; border-radius: 999px; padding: 8px 18px; font: 500 14px var(--body); color: var(--muted); cursor: pointer; transition: background .25s, color .25s, box-shadow .25s; }
+.seg button[aria-selected="true"] { background: #fff; color: var(--text); box-shadow: 0 0 0 1px var(--line), 0 4px 12px -6px rgba(28,25,23,.25); }
+.ways { position: relative; margin-top: 34px; }
+.way { transition: opacity .35s var(--ease), transform .35s var(--ease); }
+.way:not(.on) { position: absolute; inset: 0 0 auto; opacity: 0; transform: translateY(10px); pointer-events: none; }
+.way .note { margin-top: 18px; color: var(--muted); font-size: 15px; max-width: 58ch; }
+.way .note b { color: var(--text); font-weight: 500; }
+.way .term { position: relative; padding-right: 96px; }
+.way .term div { white-space: pre; }
+.copy { position: absolute; top: 14px; right: 14px; border: 0; border-radius: 8px; padding: 7px 12px; background: #34302d; color: #e7e5e4; font: 500 13px var(--body); cursor: pointer; }
+.copy:hover { background: #45403c; }
+
+/* ---------- closing ---------- */
+.closing { padding: 160px 0 150px; border-top: 1px solid var(--line); }
+.closing h2 { font-size: clamp(44px, 6.4vw, 92px); line-height: 1; }
+.closing h2 span { color: var(--faint); }
+.closing .actions { display: flex; align-items: center; gap: 24px; margin-top: 44px; flex-wrap: wrap; }
+.closing .req { font-size: 13px; color: var(--muted); }
+footer { border-top: 1px solid var(--line); padding: 26px 0 48px; font-size: 13px; color: var(--muted); }
+footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+footer a:hover { color: var(--text); }
+
+/* reveal */
+.rv { opacity: 0; transform: translateY(24px); transition: opacity .9s var(--ease), transform 1s var(--ease); }
+.rv.in { opacity: 1; transform: none; }
+.d1 { transition-delay: .08s; } .d2 { transition-delay: .16s; } .d3 { transition-delay: .24s; }
+
+@media (max-width: 900px) {
+  .wrap { padding: 0 20px; }
+  nav .links { display: none; }
+  nav .btn.small { margin-left: auto; }
+  #hero { height: auto; }
+  .hero-stage { position: relative; height: auto; padding: 110px 0 40px; }
+  .hero-head { grid-template-columns: 1fr; }
+  .hero-head .btn { justify-self: start; }
+  .fhead { grid-template-columns: 1fr; gap: 20px; }
+  .feature { padding: 90px 0 100px; }
+  .fvis { margin-top: 44px; }
+  .statement { padding: 100px 0 90px; }
+  .ideas { grid-template-columns: 1fr; gap: 20px; }
+  .ideas-text { min-height: 190px; }
+  .rail i { height: 40px; }
+  .idea p { margin-top: 12px; }
+  .ideas-art { height: 380px; }
+  .manifest { padding: 16px; font-size: 11.5px; }
+  .svc-row { grid-template-columns: 12px 54px 1fr; padding: 8px 12px; font-size: 11.5px; }
+  .svc-row span { display: none; }
+  .plate { padding: 22px 16px; }
+  .stream { font-size: 11.5px; padding: 14px; }
+  .stream div { grid-template-columns: 34px 1fr; gap: 8px; }
+  .lanes { margin-top: 40px; }
+  .lane { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: 110px; }
+  .lane > span { font-size: 13px; }
+  .chip { font-size: 12px; padding: 5px 10px; }
+  .env { margin: 24px 0 0; font-size: 12px; }
+  .pair .fvis { height: auto; display: grid; gap: 18px; }
+  .pair .frame { position: relative; width: 100%; inset: auto; transform: none !important; opacity: 1 !important; }
+  .closing { padding: 110px 0 100px; }
+  .term { padding: 20px; font-size: 12px; }
+  .way .term { padding-right: 20px; padding-top: 52px; }
+}
+@media (max-width: 380px) {
+  .logo img { height: 20px; }
+  nav .wrap { gap: 12px; }
+  nav .btn.small { padding: 0 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .rv, .env div, [data-step], #cli .term div { opacity: 1; transform: none; transition: none; }
+  .sock.on .cur, .wire2 .flow { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="logo" href="#hero" aria-label="multiprise"><img src="lockup.svg" alt="multiprise"></a>
+    <div class="links">
+      <a href="#ideas">How it works</a>
+      <a href="#cli" data-feature="cli">CLI &amp; MCP</a>
+      <a href="#mac">Your Mac</a>
+      <a href="#ports">Ports</a>
+      <a href="#get">Get it</a>
+      <a data-link="repo" href="#">GitHub</a>
+    </div>
+    <a class="btn small" data-download href="#get"><svg viewBox="0 0 814 1000" aria-hidden="true"><path d="M788 341c-6 4-108 62-108 190 0 148 130 200 134 201-1 3-21 71-68 141-43 61-87 122-156 122s-86-40-165-40c-77 0-104 41-167 41s-107-57-158-127C42 787 0 671 0 560c0-178 116-272 230-272 61 0 111 40 149 40 37 0 94-42 163-42 26 0 120 2 182 91zM543 173c29-34 49-81 49-129 0-6 0-13-2-18-47 2-102 31-135 69-26 29-50 76-50 124 0 7 1 14 2 17 3 0 8 1 12 1 42 0 95-28 124-64z"/></svg>Download</a>
+  </div>
+</nav>
+
+<!-- Windows band + waitlist (SITE.windows). Addresses go to api/waitlist.js (private Vercel Blob store). -->
+<div class="band" id="band" hidden>
+  <div class="band-row" id="bandPitch">
+    <span><b>A Windows build is coming soon.</b><span class="band-more"> The early build is for Apple Silicon Macs for now.</span></span>
+    <button type="button" class="band-cta" id="bandJoin">Join the waitlist</button>
+  </div>
+  <form class="band-row" id="bandForm" hidden novalidate>
+    <label class="sr" for="wlEmail">Email address</label>
+    <input id="wlEmail" name="email" type="email" required placeholder="you@example.com" autocomplete="email">
+    <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <button type="submit" class="band-submit" id="bandSubmit">Notify me</button>
+    <button type="button" class="band-x" id="bandClose" aria-label="Close">×</button>
+    <span class="band-fine">We'll only use it to tell you when the Windows build is ready.</span>
+  </form>
+  <div class="band-row" id="bandDone" hidden role="status"><span><b>You're on the list.</b> We'll email you when the Windows build is ready.</span></div>
+  <p class="band-err" id="bandErr" role="alert" hidden></p>
+</div>
+
+<main>
+<!-- 1. Hero: the claim, then the real app, which tilts upright as you scroll. -->
+<section id="hero">
+  <div class="hero-stage">
+    <div class="wrap">
+      <div class="hero-head">
+        <div>
+          <h1 class="rv in">Run every local project from one place.</h1>
+          <p class="lede rv in d1">Multiprise finds the services in your project folders, launches them on free ports, and keeps every log in one stream.</p>
+        </div>
+        <a class="btn rv in d2" data-download href="#get"><svg viewBox="0 0 814 1000" aria-hidden="true"><path d="M788 341c-6 4-108 62-108 190 0 148 130 200 134 201-1 3-21 71-68 141-43 61-87 122-156 122s-86-40-165-40c-77 0-104 41-167 41s-107-57-158-127C42 787 0 671 0 560c0-178 116-272 230-272 61 0 111 40 149 40 37 0 94-42 163-42 26 0 120 2 182 91zM543 173c29-34 49-81 49-129 0-6 0-13-2-18-47 2-102 31-135 69-26 29-50 76-50 124 0 7 1 14 2 17 3 0 8 1 12 1 42 0 95-28 124-64z"/></svg>Download the early build</a>
+      </div>
+      <div class="shot-wrap">
+        <div class="shot-glow" aria-hidden="true"></div>
+        <div class="shot" id="heroShot"><img src="img/hero.png" alt="Multiprise running a project: the api and web services are ready on their own ports, with the storefront they serve open in the in-app browser beside them" width="1920" height="1229" data-ph="App screenshot"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. Statement -->
+<section class="statement" id="statement">
+  <div class="wrap">
+    <p class="rv"><b>A power strip for your dev environment.</b> Multiprise reads the manifests your projects already have, gives every service a port nobody else is using, and keeps their output in one stream you can search.</p>
+  </div>
+</section>
+
+<!-- 3. Ideas: three beats, one at a time, each visual plays out as you scroll.
+     Beat 1 is the atlas demo project from img/add.png: its real manifest lines and what the
+     scanner detects from them. Beats 2 and 3 are illustrations built from the real launch
+     (ports from img/hero.png, log lines from img/logs.png). -->
+<section class="scene" id="ideas">
+  <div class="stage">
+    <div class="wrap ideas">
+      <div class="ideas-text">
+        <div class="rail" aria-hidden="true"><i><b></b></i><i><b></b></i><i><b></b></i></div>
+        <div class="idea"><h2>Nothing to configure.</h2><p>It reads the manifests your project already has and picks each service's dev script.</p></div>
+        <div class="idea"><h2>A free port, every time.</h2><p>Every service plugs in on a port nobody else is using.</p></div>
+        <div class="idea"><h2>One stream of logs.</h2><p>Every service's output in one place, searchable and without the escape codes.</p></div>
+      </div>
+      <div class="ideas-art" aria-hidden="true">
+        <div class="viz">
+          <div class="panel manifest">
+            <span class="dir">atlas/</span>
+            <div class="file" data-step="0.05"><span class="path">app/package.json</span><span class="line pick">"dev": "vite"</span></div>
+            <div class="file" data-step="0.25"><span class="path">server/package.json</span><span class="line pick">"dev": "tsx watch src/index.ts"</span><span class="line skip">"start": "node dist/index.js"</span></div>
+            <div class="file" data-step="0.45"><span class="path">worker/Cargo.toml</span><span class="line pick">name = "atlas-worker"</span></div>
+          </div>
+          <div class="found">
+            <div class="svc-row" data-step="0.15"><i></i><b>app</b><code>npm run dev</code><span>Frontend</span></div>
+            <div class="svc-row" data-step="0.35"><i></i><b>server</b><code>npm run dev</code><span>Backend</span></div>
+            <div class="svc-row" data-step="0.55"><i></i><b>worker</b><code>cargo run</code><span>Service</span></div>
+          </div>
+        </div>
+        <div class="viz">
+          <div class="panel plate">
+            <div class="sock" data-sock="0.2"><svg viewBox="28 28 456 456" fill="none"><circle cx="256" cy="256" r="206" stroke="currentColor" stroke-width="30"/><rect x="237" y="72" width="38" height="96" rx="19" fill="currentColor"/><path d="M167 234 L211 275 L167 317" stroke="currentColor" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/><path class="cur" d="M269 317 H345" stroke="currentColor" stroke-width="30" stroke-linecap="round"/></svg><small>:5064 <em>api</em></small></div>
+            <div class="sock" data-sock="0.45"><svg viewBox="28 28 456 456" fill="none"><circle cx="256" cy="256" r="206" stroke="currentColor" stroke-width="30"/><rect x="237" y="72" width="38" height="96" rx="19" fill="currentColor"/><path d="M167 234 L211 275 L167 317" stroke="currentColor" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/><path class="cur" d="M269 317 H345" stroke="currentColor" stroke-width="30" stroke-linecap="round"/></svg><small>:5309 <em>web</em></small></div>
+            <div class="sock"><svg viewBox="28 28 456 456" fill="none"><circle cx="256" cy="256" r="206" stroke="currentColor" stroke-width="30"/><rect x="237" y="72" width="38" height="96" rx="19" fill="currentColor"/><path d="M167 234 L211 275 L167 317" stroke="currentColor" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/><path class="cur" d="M269 317 H345" stroke="currentColor" stroke-width="30" stroke-linecap="round"/></svg><small>free</small></div>
+          </div>
+        </div>
+        <div class="viz">
+          <div class="stream">
+            <div data-step="0.05"><span class="api">api</span><span class="ok">northwind-api listening on http://127.0.0.1:5064</span></div>
+            <div data-step="0.12"><span class="web">web</span><span class="ok">VITE v7.3.6  ready in 145 ms</span></div>
+            <div data-step="0.19"><span class="api">api</span><span>GET /api/products 200 1ms</span></div>
+            <div data-step="0.26"><span class="api">api</span><span>GET /api/stock 200 2ms</span></div>
+            <div data-step="0.33"><span class="web">web</span><span>[vite] (client) page reload src/main.js</span></div>
+            <div data-step="0.40"><span class="api">api</span><span>GET /api/products 200 1ms</span></div>
+            <div data-step="0.47"><span class="api">api</span><span class="warn">warning: stock feed slow, serving cached counts</span></div>
+            <div data-step="0.54"><span class="api">api</span><span>GET /api/stock 200 1ms</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. Command line and MCP (SITE.features.cli). Commands, comments and tools follow the
+     "Command Line and MCP Server" section of the README; no output is shown because none is captured. -->
+<section class="feature" id="cli" data-feature="cli">
+  <div class="wrap">
+    <div class="fhead">
+      <h2 class="rv">Command line<br>and MCP</h2>
+      <p class="rv d1"><b>Your agents reuse what's already running.</b> Everything the app does, from a terminal or an agent: start services, read their logs, get their URLs, instead of starting duplicates on random ports. <span data-when="next">Coming in the next release.</span></p>
+    </div>
+    <div class="term rv" id="term">
+      <div><span class="p">$</span> multiprise up          <span class="c"># start the project in this folder, or this worktree, backend first</span></div>
+      <div><span class="p">$</span> multiprise logs web -f <span class="c"># follow a service's output</span></div>
+      <div><span class="p">$</span> multiprise running     <span class="c"># every dev server on this Mac, whoever started it</span></div>
+      <div><span class="p">$</span> multiprise usage       <span class="c"># CPU and memory, per project</span></div>
+      <div> </div>
+      <div><span class="p">$</span> multiprise agents connect</div>
+      <div><span class="c"># Claude Code starts servers through Multiprise: start_service, tail_logs, get_url, get_usage…</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. Discovery and launch -->
+<section class="feature" id="discovery">
+  <div class="wrap">
+    <div class="fhead">
+      <h2 class="rv">Discovery<br>and launch</h2>
+      <p class="rv d1"><b>Point it at a folder.</b> Multiprise picks each service's dev script, installs missing dependencies, and starts the backend before the frontend.</p>
+    </div>
+    <div class="fvis rv">
+      <div class="frame dialog"><img src="img/add.png" alt="Adding a project in Multiprise: three services are detected, two npm scripts and a Cargo worker" width="1536" height="902" data-ph="Add screenshot"></div>
+    </div>
+    <p class="tokens rv">Works with <code>npm</code> <code>pnpm</code> <code>Yarn</code> <code>Bun</code> <code>Cargo</code> <code>Docker Compose</code> and keeps any command you edit.</p>
+  </div>
+</section>
+
+<!-- 6. Ports and wiring: the real ranges (port-ranges.json) and the variables from buildStartEnv.
+     The api and web ports are the ones from the real launch in img/hero.png; the ports held
+     by other apps are examples. -->
+<section class="scene" id="ports">
+  <div class="stage">
+    <div class="wrap">
+      <div class="fhead">
+        <h2>Ports<br>and wiring</h2>
+        <p><b>No more port roulette.</b> Each service gets a port nobody else is using, and the frontend is told where its API lives.</p>
+      </div>
+      <div class="lanes" id="lanes" aria-label="The api service takes port 5064 in the backend range. The web service finds port 5173 taken and takes 5309 in the frontend range. Then web is given the api's address.">
+        <svg class="wire2" id="wire2" aria-hidden="true"><path id="wirePath"/><path class="flow" id="wireFlow" pathLength="1"/></svg>
+        <div class="lane"><span>Frontends</span><div class="track-rail" id="railFe"></div></div>
+        <div class="lane"><span>Backends</span><div class="track-rail" id="railBe"></div></div>
+        <div class="scale" id="scale" aria-hidden="true"></div>
+      </div>
+      <div class="env" id="env" aria-hidden="true">
+        <div><span class="k">PORT=</span>5309</div>
+        <div><span class="k">BACKEND_PORT=</span>5064</div>
+        <div><span class="k">VITE_API_URL=</span>http://localhost:5064</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. Logs and preview: two real screenshots; the preview slides over the logs as you scroll. -->
+<section class="feature pair" id="logs">
+  <div class="wrap">
+    <div class="fhead">
+      <h2 class="rv">Logs<br>and preview</h2>
+      <p class="rv d1"><b>See what every service is doing.</b> Search and filter all of their output in one stream, and open any frontend in a tab right beside it.</p>
+    </div>
+    <div class="fvis">
+      <div class="frame a" id="logsA"><img src="img/logs.png" alt="The project's logs searched for &quot;stock&quot;, with matches and warnings highlighted" width="1920" height="1229" data-ph="Logs screenshot"></div>
+      <div class="frame b" id="logsB"><img src="img/browser.png" alt="The running storefront open in Multiprise's in-app browser" width="1920" height="1229" data-ph="Preview screenshot"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 8. Your Mac: every dev server, whoever started it, and what it costs. Real captures of the
+     demo profile; the servers Multiprise did not start and the machine figures are illustrations. -->
+<section class="feature pair" id="mac">
+  <div class="wrap">
+    <div class="fhead">
+      <h2 class="rv">Everything<br>on your Mac</h2>
+      <p class="rv d1"><b>See every dev server, whoever started it.</b> Yours, a terminal's, or an agent's in a worktree, with the ones left behind marked. Then see what each project costs in CPU and memory, and what else is using your Mac.</p>
+    </div>
+    <div class="fvis">
+      <div class="frame a" id="macA"><img src="img/running.png" alt="Home in Multiprise: every dev server on the Mac with its port, command and who started it, and one left behind by a closed terminal" width="1920" height="1229" data-ph="Running screenshot"></div>
+      <div class="frame b" id="macB"><img src="img/activity.png" alt="Activity in Multiprise: the Mac's CPU and memory over the last minutes, and what each dev server takes" width="1920" height="1229" data-ph="Activity screenshot"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 9. Privacy: five statements, one after another. -->
+<section class="feature" id="privacy">
+  <div class="wrap">
+    <div class="fhead">
+      <h2 class="rv">Built to stay<br>on your Mac</h2>
+      <p class="rv d1"><b>Your projects never leave it.</b> Multiprise is a local tool with no account, no cloud and nothing to send.</p>
+    </div>
+    <div class="claims">
+      <p class="rv"><b>Local only.</b> It listens on 127.0.0.1, never on your network.</p>
+      <p class="rv"><b>No account.</b> Download it and open it.</p>
+      <p class="rv"><b>No telemetry.</b> It never phones home.</p>
+      <p class="rv"><b>Sandboxed tabs.</b> Previews can't reach the app's controls.</p>
+      <p class="rv"><b>Open source.</b> Read every line it runs.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 10. Get it early: open source, before its first full release. -->
+<section class="feature" id="get">
+  <div class="wrap">
+    <div class="fhead">
+      <h2 class="rv">Open source.<br>Get it early.</h2>
+      <p class="rv d1"><b>MIT licensed, built in the open.</b> Grab the early build for your Mac, or run it from the source. Issues and pull requests are welcome.</p>
+    </div>
+    <div class="get rv">
+      <div class="seg" role="tablist" aria-label="Ways to get Multiprise">
+        <button type="button" role="tab" aria-selected="true" aria-controls="way-build" id="tab-build">Early build</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="way-source" id="tab-source">From source</button>
+      </div>
+      <div class="ways">
+        <div class="way on" id="way-build" role="tabpanel" aria-labelledby="tab-build">
+          <a class="btn big" data-download href="#get"><svg viewBox="0 0 814 1000" aria-hidden="true"><path d="M788 341c-6 4-108 62-108 190 0 148 130 200 134 201-1 3-21 71-68 141-43 61-87 122-156 122s-86-40-165-40c-77 0-104 41-167 41s-107-57-158-127C42 787 0 671 0 560c0-178 116-272 230-272 61 0 111 40 149 40 37 0 94-42 163-42 26 0 120 2 182 91zM543 173c29-34 49-81 49-129 0-6 0-13-2-18-47 2-102 31-135 69-26 29-50 76-50 124 0 7 1 14 2 17 3 0 8 1 12 1 42 0 95-28 124-64z"/></svg>Download the early build</a>
+          <p class="note"><b>For Apple Silicon Macs on macOS 12 or later.</b> Early builds aren't notarized by Apple yet, so the first time you open it, macOS asks you to confirm it in System Settings › Privacy &amp; Security.</p>
+        </div>
+        <div class="way" id="way-source" role="tabpanel" aria-labelledby="tab-source">
+          <div class="term"><button type="button" class="copy" id="copySource">Copy</button><div id="sourceCmds"><span class="p">$</span> git clone <span data-repo-url>https://github.com/Djbrl/multiprise.git</span>
+<span class="p">$</span> cd multiprise
+<span class="p">$</span> npm install
+<span class="p">$</span> npm run dev</div></div>
+          <p class="note"><b>Needs Node.js 20.19+ or 22.12+ and npm.</b> <code>npm run dev</code> starts the app from source with its own dev ports.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 11. Closing -->
+<section class="closing">
+  <div class="wrap">
+    <h2 class="rv">Plug in.<br><span>Start building.</span></h2>
+    <div class="actions rv d1">
+      <a class="btn big" data-download href="#get"><svg viewBox="0 0 814 1000" aria-hidden="true"><path d="M788 341c-6 4-108 62-108 190 0 148 130 200 134 201-1 3-21 71-68 141-43 61-87 122-156 122s-86-40-165-40c-77 0-104 41-167 41s-107-57-158-127C42 787 0 671 0 560c0-178 116-272 230-272 61 0 111 40 149 40 37 0 94-42 163-42 26 0 120 2 182 91zM543 173c29-34 49-81 49-129 0-6 0-13-2-18-47 2-102 31-135 69-26 29-50 76-50 124 0 7 1 14 2 17 3 0 8 1 12 1 42 0 95-28 124-64z"/></svg>Download the early build</a>
+      <a class="link" data-link="repo" href="#">View the source</a>
+      <span class="req" id="req"></span>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span id="footLeft"></span>
+    <span id="footLinks"></span>
+  </div>
+</footer>
+
+<script>
+/* ============================================================
+   EDIT HERE. Every link and fact on the page that can change.
+   links: null = hidden (repo) or greyed out (download).
+   features: false = that section stays hidden until it ships.
+   ============================================================ */
+const SITE = {
+  version: "0.2.0",
+  requirements: "Apple Silicon · macOS 12 or later",
+  links: {
+    download: "https://github.com/Djbrl/multiprise/releases/latest",  // GitHub for now; a direct .dmg URL also works
+    repo: "https://github.com/Djbrl/multiprise",
+  },
+  features: {
+    // the multiprise CLI + MCP server: false = hidden, "next" = shown as coming in the next
+    // release, true = shown as available
+    cli: true,
+  },
+  license: "MIT",
+  // the band under the header: "soon" = Windows build coming, with the waitlist; null = no band
+  windows: "soon",
+  waitlist: "/api/waitlist",
+};
+
+/* ---------- fill the page from SITE ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+document.querySelectorAll("[data-download]").forEach(a => {
+  const url = SITE.links.download;
+  if (!url) { a.classList.add("pending"); a.setAttribute("aria-disabled", "true"); return; }
+  a.href = url;
+  if (/\.dmg$/i.test(url)) a.setAttribute("download", "");
+  else { a.target = "_blank"; a.rel = "noopener"; }
+});
+document.querySelectorAll("[data-link]").forEach(a => {
+  const url = SITE.links[a.dataset.link];
+  if (url) { a.href = url; a.target = "_blank"; a.rel = "noopener"; } else a.hidden = true;
+});
+document.querySelectorAll("[data-repo-url]").forEach(el => { if (SITE.links.repo) el.textContent = SITE.links.repo + ".git"; });
+document.querySelectorAll("[data-feature]").forEach(el => {
+  const state = SITE.features[el.dataset.feature];
+  el.hidden = !state;
+  el.querySelectorAll("[data-when]").forEach(note => { note.hidden = note.dataset.when !== state; });
+});
+$("#req").textContent = [SITE.requirements, SITE.version && "Early build " + SITE.version].filter(Boolean).join(" · ");
+$("#footLeft").textContent = "Multiprise" + (SITE.license ? " · Open source, " + SITE.license + " licensed" : "");
+$("#footLinks").innerHTML = [["repo", "Source"], ["download", "Download"]]
+  .filter(([k]) => SITE.links[k]).map(([k, t]) => `<a href="${esc(SITE.links[k])}" target="_blank" rel="noopener">${t}</a>`).join(" · ");
+
+/* ---------- Windows band + waitlist ---------- */
+if (SITE.windows === "soon") {
+  const band = $("#band"), form = $("#bandForm"), pitch = $("#bandPitch"), done = $("#bandDone"), err = $("#bandErr");
+  band.hidden = false;
+  const fold = () => document.body.classList.toggle("scrolled", scrollY > 40);
+  addEventListener("scroll", fold, { passive: true }); fold();
+  const show = (el) => { [pitch, form, done].forEach(x => { x.hidden = x !== el; }); band.classList.toggle("open", el === form); };
+  $("#bandJoin").addEventListener("click", () => { show(form); $("#wlEmail").focus(); });
+  $("#bandClose").addEventListener("click", () => { err.hidden = true; show(pitch); });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = $("#wlEmail").value.trim();
+    err.hidden = true;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { err.textContent = "Enter a valid email address."; err.hidden = false; return; }
+    $("#bandSubmit").disabled = true;
+    try {
+      const response = await fetch(SITE.waitlist, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, website: form.elements.website.value })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Something went wrong. Try again in a moment.");
+      show(done);
+      setTimeout(() => band.classList.remove("open"), 4000);
+    } catch (error) {
+      err.textContent = error.message; err.hidden = false;
+    } finally {
+      $("#bandSubmit").disabled = false;
+    }
+  });
+}
+
+/* ---------- get it early: the two ways ---------- */
+const tabs = [$("#tab-build"), $("#tab-source")], ways = [$("#way-build"), $("#way-source")];
+tabs.forEach((tab, i) => tab.addEventListener("click", () => {
+  tabs.forEach((t, j) => t.setAttribute("aria-selected", String(i === j)));
+  ways.forEach((w, j) => w.classList.toggle("on", i === j));
+}));
+$("#copySource").addEventListener("click", async () => {
+  const text = $("#sourceCmds").textContent.replace(/^\$ /gm, "");
+  try { await navigator.clipboard.writeText(text); $("#copySource").textContent = "Copied"; }
+  catch { $("#copySource").textContent = "Select it"; }
+  setTimeout(() => ($("#copySource").textContent = "Copy"), 1600);
+});
+
+/* screenshots: soft placeholder until the real PNG exists */
+document.querySelectorAll(".frame img, .shot img").forEach(img => {
+  const ph = () => { const d = document.createElement("div"); d.className = "ph"; d.textContent = img.dataset.ph; img.replaceWith(d); };
+  if (img.complete && !img.naturalWidth) ph(); else img.addEventListener("error", ph);
+});
+
+/* ---------- helpers ---------- */
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const win = (p, a, b) => clamp((p - a) / (b - a));
+const ease = t => 1 - Math.pow(1 - t, 3);
+const inOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+// __P: preview hook, {sectionId: 0..1}. "over" = progress while the section crosses the viewport.
+const progress = (el, over = false) => {
+  if (window.__P?.[el.id] !== undefined) return window.__P[el.id];
+  const r = el.getBoundingClientRect();
+  if (over) { const range = r.height + innerHeight; return range > 0 ? clamp((innerHeight - r.top) / range) : 0; }
+  const range = el.offsetHeight - innerHeight;
+  return range > 0 ? clamp(-r.top / range) : 0;
+};
+
+const io = new IntersectionObserver(es => es.forEach(e => {
+  if (!e.isIntersecting) return;
+  e.target.classList.add("in"); io.unobserve(e.target);
+}), { threshold: .2, rootMargin: "0px 0px -6% 0px" });
+document.querySelectorAll(".rv, #term").forEach(el => io.observe(el));
+
+/* ---------- ports: rails from the real ranges ---------- */
+// A broken axis: 2900-6100 and 7900-9100 are drawn; the empty stretch between them is skipped.
+const SEGS = [[2900, 6100, 0, 73], [7900, 9100, 79, 100]];
+const px = v => {
+  const [a, b, x0, x1] = SEGS.find(([a, b]) => v <= b) ?? SEGS[SEGS.length - 1];
+  return x0 + (Math.max(a, v) - a) / (b - a) * (x1 - x0);
+};
+const RANGES = { fe: [[3000, 4999], [5100, 5999]], be: [[5000, 5099], [8000, 8999]] };
+const TAKEN = { fe: [3000, 5173], be: [8080] };   // example ports already held by other apps
+function buildRail(el, lane) {
+  el.innerHTML =
+    SEGS.map(([, , x0, x1]) => `<div class="axisline" style="left:${x0}%;width:${x1 - x0}%"></div>`).join("") +
+    RANGES[lane].map(([a, b]) => `<div class="range" style="left:${px(a)}%;width:${px(b + 1) - px(a)}%"></div>`).join("") +
+    TAKEN[lane].map(v => `<div class="taken" data-port="${v}" style="left:${px(v)}%"><small>${v}</small></div>`).join("");
+}
+buildRail($("#railFe"), "fe"); buildRail($("#railBe"), "be");
+$("#scale").innerHTML = [3000, 4000, 5000, 6000, 8000, 9000].map(v => `<span style="left:${px(v)}%">${v}</span>`).join("") + `<i style="left:${(SEGS[0][3] + SEGS[1][2]) / 2}%">⋯</i>`;
+const chipApi = Object.assign(document.createElement("div"), { className: "chip", innerHTML: "<i></i>api<em>:5064</em>" });
+const chipWeb = Object.assign(document.createElement("div"), { className: "chip", innerHTML: "<i></i>web<em>:5309</em>" });
+$("#railBe").appendChild(chipApi); $("#railFe").appendChild(chipWeb);
+const takenVite = $('#railFe .taken[data-port="5173"]');  // Vite's default: usually already taken
+
+/* ---------- scroll-driven scenes ---------- */
+const hero = $("#hero"), shot = $("#heroShot");
+const ideas = $("#ideas"), ideaEls = [...document.querySelectorAll(".idea")], vizEls = [...document.querySelectorAll(".viz")], railEls = [...document.querySelectorAll(".rail b")];
+const ports = $("#ports"), envEls = [...document.querySelectorAll("#env div")];
+const pairs = [[$("#logs"), $("#logsA"), $("#logsB")], [$("#mac"), $("#macA"), $("#macB")]];
+const desktop = matchMedia("(min-width: 901px)");
+
+function heroFrame() {
+  if (!desktop.matches) { shot.style.transform = ""; return; }
+  const t = ease(win(progress(hero), 0, .8));
+  shot.style.transform = `rotateX(${(1 - t) * 18}deg) scale(${.92 + t * .08}) translateY(${(1 - t) * 10}px)`;
+}
+
+function ideasFrame() {
+  const p = progress(ideas), n = ideaEls.length;
+  ideaEls.forEach((el, i) => {
+    const a = i / n, b = (i + 1) / n;
+    const fadeIn = i === 0 ? 1 : win(p, a - .03, a + .04);
+    const fadeOut = i === n - 1 ? 0 : win(p, b - .04, b + .02);
+    const o = Math.min(fadeIn, 1 - fadeOut);
+    el.style.opacity = o;
+    el.style.transform = `translateY(${(1 - fadeIn) * 20 - fadeOut * 20}px)`;
+    const viz = vizEls[i];
+    viz.style.opacity = o;
+    viz.style.transform = `translateY(${(1 - fadeIn) * 24 - fadeOut * 24}px)`;
+    // local progress through this beat drives the steps inside its visual
+    const local = win(p, a, b);
+    viz.querySelectorAll("[data-step]").forEach(s => s.classList.toggle("on", local >= +s.dataset.step || (i === 0 && p === 0 && +s.dataset.step < .1)));
+    viz.querySelectorAll("[data-sock]").forEach(s => s.classList.toggle("on", local >= +s.dataset.sock));
+    railEls[i].style.transform = `scaleY(${local})`;
+  });
+}
+
+function placeChip(chip, x, visible) { chip.style.left = x + "%"; chip.style.opacity = visible ? 1 : 0; }
+function portsFrame() {
+  const p = progress(ports);
+  // api (the backend) starts first and docks at its port
+  const apiT = inOut(win(p, .1, .3));
+  placeChip(chipApi, -6 + (px(5064) + 6) * apiT, p > .08);
+  chipApi.classList.toggle("docked", apiT >= 1);
+  // web heads for 5173, finds it taken, and moves on to 5309
+  const stopX = px(5173) - 6;
+  const toTaken = inOut(win(p, .34, .46)), onward = inOut(win(p, .54, .66));
+  const xWeb = onward > 0 ? stopX + (px(5309) - stopX) * onward : -6 + (stopX + 6) * toTaken;
+  placeChip(chipWeb, xWeb, p > .32);
+  takenVite.classList.toggle("refuse", p > .45 && p < .58);
+  chipWeb.classList.toggle("docked", onward >= 1);
+  // then the wire from api to web, and the variables web is given
+  const svg = $("#wire2"), box = svg.getBoundingClientRect();
+  const ra = chipApi.getBoundingClientRect(), rw = chipWeb.getBoundingClientRect();
+  const x1 = ra.left + ra.width / 2 - box.left, y1 = ra.top - box.top;
+  const x2 = rw.left + rw.width / 2 - box.left, y2 = rw.bottom - box.top;
+  const d = `M${x1} ${y1} C ${x1} ${(y1 + y2) / 2}, ${x2} ${(y1 + y2) / 2}, ${x2} ${y2}`;
+  $("#wirePath").setAttribute("d", d); $("#wireFlow").setAttribute("d", d);
+  const len = $("#wirePath").getTotalLength?.() || 1;
+  const wireT = ease(win(p, .68, .78));
+  $("#wirePath").style.strokeDasharray = len; $("#wirePath").style.strokeDashoffset = len * (1 - wireT);
+  svg.classList.toggle("on", wireT >= 1);
+  envEls.forEach((el, i) => el.classList.toggle("on", p > .8 + i * .05));
+}
+
+function pairFrame([section, a, b]) {
+  if (!desktop.matches) { a.style.transform = b.style.transform = b.style.opacity = ""; return; }
+  const q = ease(win(progress(section, true), .15, .65));
+  a.style.transform = `translateX(${(1 - q) * 4}%)`;
+  b.style.transform = `translateX(${(1 - q) * 22}%)`;
+  b.style.opacity = .35 + q * .65;
+}
+
+let queued = false;
+function frame() { queued = false; heroFrame(); ideasFrame(); portsFrame(); pairs.forEach(pairFrame); }
+const request = () => { if (!queued) { queued = true; requestAnimationFrame(frame); } };
+addEventListener("scroll", request, { passive: true });
+addEventListener("resize", request);
+document.fonts?.ready.then(request);
+frame();
+</script>
+</body>
+</html>

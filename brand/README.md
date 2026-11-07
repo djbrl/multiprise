@@ -32,7 +32,8 @@ Rendered PNGs in `png/`: `icon-1024/512/256`, `icon-dark-1024`, `avatar-1024`, `
 | --- | --- |
 | `build/icon.png`, `build/icon.icns` | `icon.svg` |
 | `renderer/src/assets/multiprise-icon.svg` (in-app sidebar, README) | `icon.svg` |
-| `site/icon.svg` (favicon and nav logo) | `icon-flat.svg` |
+| `site/icon.svg` (favicon) | `icon-flat.svg` |
+| `site/lockup.svg` (landing page nav logo) | `lockup.svg` |
 | `site/apple-touch-icon.png` | `png/apple-touch-icon.png` |
 | `site/og.png`, `.github/social-preview.png` | `png/social-card.png` |
 
