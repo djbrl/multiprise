@@ -123,17 +123,6 @@ export function groupInitials(group: Group<ProjectView>) {
   return letters.join('') || name.slice(0, 1).toUpperCase()
 }
 
-const projectPalette = ['#5B8FD9', '#A87767', '#6F9C93', '#8E83A6', '#718FAE', '#A97882', '#87976A', '#A87959']
-
-export function groupAccentStyle(group: Group<ProjectView>) {
-  const value = group.path || group.name
-  let hash = 0
-  for (let index = 0; index < value.length; index += 1) {
-    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0
-  }
-  return { '--project-accent': projectPalette[Math.abs(hash) % projectPalette.length] } as Record<string, string>
-}
-
 // Launch and Stop act on script services; Docker services are started one by one.
 const scriptServices = (group: Group<ProjectView>) => group.items.filter((item) => !isDockerService(item))
 

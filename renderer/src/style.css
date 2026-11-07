@@ -11,8 +11,11 @@ body,
 
 body {
   margin: 0;
-  background: #f3f4f6;
-  font-family: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  background: #ffffff;
+  font-family: "Inter Variable", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -21,14 +24,21 @@ input {
 }
 
 ::selection {
-  background: #bfd7fb;
-  color: #252527;
+  background: #d4d4d8;
+  color: #18181b;
 }
 
 /* App shell, shared transitions and surfaces (used across components, so not scoped). */
 
-.app-drag-region {
+.app-drag-region,
+.page-header {
   -webkit-app-region: drag;
+}
+
+.page-header button,
+.page-header input,
+.page-header a {
+  -webkit-app-region: no-drag;
 }
 
 body.resizing-project-panes,
@@ -113,42 +123,79 @@ body.resizing-project-panes .project-split {
   background: var(--app-bg);
 }
 
-.multiprise-shell::before {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  content: "";
-  background-image:
-    linear-gradient(var(--circuit) 1px, transparent 1px),
-    linear-gradient(90deg, var(--circuit) 1px, transparent 1px);
-  background-position: 0 0;
-  background-size: 44px 44px;
+/* The Socket theme: the logo's materials. The window is its orange shell, the page a plate
+   resting on it, buttons and cards raised, fields and logs cut in like the socket's recess. */
+
+[data-theme='socket'].multiprise-shell {
+  background: linear-gradient(180deg, #ff8f45 0%, #f26a1b 55%, #e25a12 100%);
 }
 
-
-.focus-panel {
-  --text: #E7E5E0;
-  --text-muted: #B2B0AA;
-  --text-subtle: #85858C;
-  --text-strong: #FAFAF8;
-  --border: #505050;
-  --hover: #464646;
-  --selection: #464646;
-  --panel-bg: #3B3B3B;
-  --panel-muted: #343434;
-  --ghost-bg: #454545;
-  --ghost-hover: #515151;
-  --ghost-text: #F0EFEB;
-  --input-bg: #2A2A2A;
-  --input-border: #555555;
-  --input-text: #F5F4F0;
-  --input-placeholder: #85858C;
-  --chip-active-bg: #474747;
-  --danger-bg: #4A302D;
+[data-theme='socket'] .content-plate {
+  margin: 8px 8px 8px 0;
+  overflow: hidden;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fffcf7, #fbf3e8);
+  box-shadow: inset 0 1px 0 #ffffff, 0 10px 28px rgba(124, 45, 18, 0.45);
 }
 
-.powered-service {
-  background: var(--panel-muted);
+[data-theme='socket'] .sidebar-logo {
+  filter: drop-shadow(0 2px 3px rgba(124, 45, 18, 0.55));
+}
+
+[data-theme='socket'] .sidebar-search {
+  border-color: transparent;
+  background: linear-gradient(180deg, #f3dac4, #fcefe3);
+  box-shadow: inset 0 1px 3px rgba(124, 45, 18, 0.45), 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: #5a3a25;
+}
+
+[data-theme='socket'] aside .nav-selected {
+  background: linear-gradient(180deg, #fffcf7, #fbe8d6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 2px 5px rgba(124, 45, 18, 0.4);
+  font-weight: 600;
+}
+
+/* A running dot on the orange itself needs a rim to stay readable. */
+[data-theme='socket'] aside .status-live {
+  box-shadow: 0 0 0 1.5px #fffcf7;
+}
+
+[data-theme='socket'] aside .nav-selected .status-live {
+  box-shadow: none;
+}
+
+[data-theme='socket'] .btn-primary {
+  background-image: linear-gradient(180deg, #ff8f45, #f26a1b 60%, #e25a12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 1px 3px rgba(124, 45, 18, 0.5);
+  font-weight: 600;
+}
+
+[data-theme='socket'] .btn-secondary {
+  border-color: transparent;
+  background-image: linear-gradient(180deg, #ffffff, #fbf1e6);
+  box-shadow: 0 0 0 1px #e2d0bc, 0 1px 2px rgba(124, 45, 18, 0.18);
+}
+
+[data-theme='socket'] .surface-raised {
+  border-color: transparent;
+  background-image: linear-gradient(180deg, #ffffff, #fef9f2);
+  box-shadow: 0 0 0 1px #eadccb, 0 2px 6px rgba(124, 45, 18, 0.1);
+}
+
+[data-theme='socket'] .surface-recess {
+  border-color: transparent;
+  box-shadow: inset 0 1px 3px rgba(124, 45, 18, 0.22);
+}
+
+[data-theme='socket'] .project-mark {
+  border-color: transparent;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, #fcefe3, #f3dac4 75%, #e6bf9f);
+  box-shadow: inset 0 1px 2px rgba(124, 45, 18, 0.3);
+}
+
+[data-theme='socket'] .list-band {
+  box-shadow: inset 0 1px 2px rgba(124, 45, 18, 0.1);
 }
 
 @media (prefers-reduced-motion: reduce) {

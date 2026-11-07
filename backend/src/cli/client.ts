@@ -81,7 +81,7 @@ export class MultipriseClient {
   // Resolves once the stream is open; the returned function closes it.
   events(onEvent: (event: AppEvent) => void, onClose?: () => void): Promise<() => void> {
     return new Promise((resolve, reject) => {
-      const req = http.get(new URL('/api/events', this.info.url), { headers: { [API_TOKEN_HEADER]: this.info.token } }, (res) => {
+      const req = http.get(new URL('/api/events?redact=1', this.info.url), { headers: { [API_TOKEN_HEADER]: this.info.token } }, (res) => {
         if ((res.statusCode ?? 500) >= 400) {
           res.resume()
           return reject(new ApiError(res.statusCode ?? 500, 'Could not open the event stream'))

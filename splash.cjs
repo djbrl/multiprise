@@ -18,7 +18,7 @@ const page = ({ status, card }) => `<!doctype html>
   :root { color-scheme: light dark; --bg: #f4f4f5; --card: #ffffff; --text: #18181b; --muted: #71717a; --track: #e4e4e7; --orange: #f26a1b; }
   @media (prefers-color-scheme: dark) { :root { --bg: #18181a; --card: #232326; --text: #fafafa; --muted: #a1a1aa; --track: #3f3f46; } }
   html, body { height: 100%; margin: 0; background: ${card ? 'transparent' : 'var(--bg)'}; color: var(--text);
-    font-family: 'Avenir Next', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; -webkit-user-select: none; cursor: default; }
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; -webkit-user-select: none; cursor: default; }
   body { display: flex; align-items: center; justify-content: center; -webkit-app-region: drag; }
   .card { display: flex; flex-direction: column; align-items: center; justify-content: center;
     ${card ? 'width: 100%; height: 100%; box-sizing: border-box; border-radius: 22px; background: var(--card); border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);' : ''} }

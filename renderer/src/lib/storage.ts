@@ -38,5 +38,6 @@ export const STORAGE_KEYS = {
   navigationSession: 'multiprise_navigation_session',
   recentScan: 'multiprise_recent_scan',
   recentGroups: 'multiprise_recent_groups',
-  serviceSplit: 'multiprise_service_split_ratio'
+  serviceSplit: 'multiprise_service_split_ratio',
+  agentsOfferDismissed: 'multiprise_agents_offer_dismissed'
 } as const

@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import type {
@@ -6,11 +7,25 @@ import type {
   ProcessInstance,
   ProjectInspectResult,
   ProjectView,
+  RunningServer,
   Settings,
-  UsedPort
+  UsedPort,
+  UsageReport
 } from '../types'
 import type { MultipriseClient } from './client'
-import { listProjects, qualifiedName, UsageError, type Project, type Service, type Target } from './services'
+import { findRepository } from '../repository'
+import {
+  isPathLike,
+  listProjects,
+  projectHolding,
+  qualifiedName,
+  resolveCurrentProject,
+  resolveTarget,
+  UsageError,
+  type Project,
+  type Service,
+  type Target
+} from './services'
 
 // Everything else the app can do, for the CLI and the MCP server: adding and removing
 // projects, service configuration, processes and ports, and settings.
@@ -43,6 +58,41 @@ export async function addFolders(client: MultipriseClient, folders: string[]): P
     }
   }
   return results
+}
+
+const PROJECT_FILES = ['package.json', 'Cargo.toml', 'docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml']
+
+// Inside a repository the whole checkout is tracked. Elsewhere only a folder that is clearly a
+// project is, so `up` in the wrong place cannot sweep up everything below it.
+async function trackFolder(client: MultipriseClient, folder: string, onProgress?: (message: string) => void) {
+  const repository = findRepository(folder)
+  const root = repository?.root ?? folder
+  const looksLikeProject = !!repository || PROJECT_FILES.some((file) => fs.existsSync(path.join(folder, file)))
+  if (!looksLikeProject || root === os.homedir()) {
+    throw new UsageError(`No Multiprise project contains ${folder}, and it does not look like a project. Use \`multiprise add <folder>\` to track it anyway.`)
+  }
+  const [result] = await addFolders(client, [root])
+  if (!result.added) throw new UsageError(`Could not track ${root}: ${result.error ?? 'not added'}`)
+  onProgress?.(`Now tracking ${root} (${result.services.join(', ')})`)
+}
+
+// What `up` and `start_service` act on: folders are tracked first if nothing holds them yet.
+export async function targetsToStart(client: MultipriseClient, names: string[], onProgress?: (message: string) => void, cwd = process.cwd()) {
+  let projects = await listProjects(client)
+  const targets: Target[] = []
+  for (const name of names.length ? names : ['.']) {
+    if (!isPathLike(name)) {
+      targets.push(resolveTarget(projects, name, cwd))
+      continue
+    }
+    const folder = absoluteFolder(name, cwd)
+    if (!projectHolding(projects, folder)) {
+      await trackFolder(client, folder, onProgress)
+      projects = await listProjects(client)
+    }
+    targets.push(names.length ? resolveTarget(projects, folder, cwd) : resolveCurrentProject(projects, cwd))
+  }
+  return targets
 }
 
 // Untracking stops the services and forgets their settings, secrets and logs; the folder is untouched.
@@ -164,6 +214,31 @@ export async function killProcess(client: MultipriseClient, service: Service, ta
 export async function usedPorts(client: MultipriseClient) {
   const { ports } = await client.request<{ ports: UsedPort[] }>('GET', '/api/ports/used')
   return ports
+}
+
+export async function runningServers(client: MultipriseClient) {
+  const { servers } = await client.request<{ servers: RunningServer[] }>('GET', '/api/running')
+  return servers
+}
+
+export const usageReport = (client: MultipriseClient) =>
+  client.request<UsageReport>('GET', '/api/usage')
+
+export const stopRunningServer = (client: MultipriseClient, server: RunningServer) =>
+  client.request('POST', '/api/running/stop', { key: server.key })
+
+export const runningServerName = (server: RunningServer) =>
+  `${server.project ?? server.command}${server.worktree ? ` (${server.worktree})` : ''}`
+
+// By port, or every leftover; asking for nothing is a mistake rather than "all of them".
+export function chooseRunningServers(servers: RunningServer[], ports: number[], leftovers: boolean) {
+  const chosen = leftovers ? servers.filter((server) => server.leftover) : []
+  for (const port of ports) {
+    const found = servers.find((server) => server.ports.includes(port))
+    if (!found) throw new UsageError(`Nothing listed is on port ${port}. See \`multiprise running\`; desktop apps and system services are not listed.`)
+    if (!chosen.includes(found)) chosen.push(found)
+  }
+  return chosen
 }
 
 export async function prepareService(client: MultipriseClient, service: Service, step: 'install' | 'build') {

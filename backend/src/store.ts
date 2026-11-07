@@ -23,7 +23,7 @@ const defaultSettings: Settings = {
   startup_timeout_ms: 20000,
   scan_depth: 8,
   scan_ignore: [],
-  theme: 'light'
+  theme: 'system'
 }
 
 async function ensureDataDir() {
@@ -100,7 +100,7 @@ export function sanitizeSettings(input: unknown, base: Settings = defaultSetting
     scan_ignore: Array.isArray(data.scan_ignore)
       ? data.scan_ignore.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
       : base.scan_ignore,
-    theme: data.theme === 'light' || data.theme === 'dark' ? data.theme : base.theme
+    theme: data.theme === 'system' || data.theme === 'light' || data.theme === 'dark' || data.theme === 'socket' ? data.theme : base.theme
   }
 }
 

@@ -39,6 +39,18 @@ multiprise restart api
 multiprise down
 ```
 
+`multiprise up` works anywhere: a folder nothing tracks yet is tracked first, and inside a git worktree it starts that worktree rather than the main checkout. If a service fails, the result says why and how its output ended, so there is no need to go and read the logs. Output sent through the CLI and MCP server has secrets masked (the service's secret variables, secret-looking values from its `.env` files, and common token shapes), because it usually ends up in an agent's conversation. The app's own window shows it as printed, and `multiprise api` is not filtered.
+
+`multiprise running` lists every dev server on this Mac, whoever started it: terminals and coding agents as well as Multiprise, with the project, worktree and age. Home shows the same list without any setup. A server is marked as a leftover when the terminal or agent that started it is gone (for more than an hour) or its folder is; that is a good guess rather than a certainty, so nothing is ever stopped automatically.
+
+```bash
+multiprise running                     # everything listening, leftovers first
+multiprise running stop 3911 3913      # asks first; --yes when there is no terminal
+multiprise running stop --leftovers
+```
+
+`multiprise usage` shows this Mac's CPU, memory and memory pressure, what each of those servers takes, and the heaviest of everything else: apps with their helper processes, scripts (named after the folder they run in), programs and macOS itself. Activity in the app shows the same, with the last few minutes as a graph, and the sidebar keeps the two machine figures in view. CPU is a share of the whole machine. Memory per server is what Activity Monitor calls footprint, including what has been compressed or swapped out, summed over the server and the processes it started.
+
 Everything the app does is available too, so an agent can run Multiprise from a terminal alone:
 
 ```bash
@@ -60,11 +72,13 @@ multiprise api GET /api/projects              # any other API call
 
 `multiprise help` lists every command and `multiprise help <command>` explains one. `up` and `restart` wait until each service accepts connections, give it the same port it had last time when that port is free, and hand `BACKEND_PORT`/`FRONTEND_PORT` to its siblings, exactly like the app's buttons. Every command that prints data accepts `--json`. The CLI talks to the running app and opens it if needed.
 
-`multiprise mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so coding agents reuse the services you already run instead of starting duplicates on random ports. Its tools cover the same ground: `list_services`, `start_service`, `stop_service`, `restart_service`, `tail_logs` (a service or a whole project, with a text filter), `get_url`, `get_service`, `add_project`, `remove_project`, `configure_service`, `set_environment`, `set_dependencies`, `list_ports`, `list_processes`, `kill_process`, `prepare_service`, `get_settings` and `update_settings`. For Claude Code:
+`multiprise mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, so coding agents reuse the services you already run instead of starting duplicates on random ports. Its tools cover the same ground: `list_services`, `start_service`, `stop_service`, `restart_service`, `tail_logs` (a service or a whole project, with a text filter), `get_url`, `get_service`, `add_project`, `remove_project`, `configure_service`, `set_environment`, `set_dependencies`, `list_ports`, `list_processes`, `kill_process`, `list_running_servers`, `get_usage`, `stop_running_server`, `prepare_service`, `get_settings` and `update_settings`. To set up Claude Code, press **Connect** in Settings or on Home, or run:
 
 ```bash
-claude mcp add multiprise -- multiprise mcp
+multiprise agents connect
 ```
+
+That registers the MCP server for every project (`claude mcp add --scope user`) and adds a short, marked block to `~/.claude/CLAUDE.md` telling sessions to start servers through Multiprise. `multiprise agents` shows the current state, and `multiprise agents disconnect` removes both and leaves the rest of that file alone.
 
 Other clients take the usual configuration:
 
@@ -212,9 +226,9 @@ The interface went through several layouts before settling on three priorities:
 2. **Services** provide compact launch, stop, URL, and port controls.
 3. **Processes** expose ownership and PIDs when deeper inspection is needed.
 
-The sidebar holds project search, tracked projects, active ports, and settings. Project rows show a small live state without repeating status labels. The home state focuses on adding or reopening projects, and every application launch starts there rather than restoring an accidental modal or detail view.
+The sidebar holds the command palette, tracked projects, active ports, and settings. Project rows show a small live state without repeating status labels. The home state focuses on adding or reopening projects, and every application launch starts there rather than restoring an accidental modal or detail view.
 
-The UI uses rounded, calm surfaces, an optional light or dark appearance, restrained animation, and a small electrical metaphor rather than turning every control into a plug or glowing status indicator.
+The UI uses flat, neutral surfaces where colour means status, Inter with JetBrains Mono for data, a choice of System (the default, following the Mac's light or dark setting), light, dark or Socket (the logo's orange and off-white materials) appearance, restrained animation, and a small electrical metaphor rather than turning every control into a plug or glowing status indicator.
 
 ### 8. Add a tabbed in-app browser
 
@@ -322,7 +336,7 @@ multiprise/
 │   ├── src/composables/         # Shared state and actions (projects, services, logs, ports, browser tabs, …)
 │   ├── src/lib/                 # API client, service helpers, browser storage
 │   ├── src/types.ts             # Re-exports the backend's API types, plus interface-only ones
-│   ├── src/theme.ts             # Light and dark theme tokens
+│   ├── src/theme.ts             # Light, dark and Socket theme tokens
 │   ├── src/ui.ts                # Shared button, input, and panel classes
 │   ├── src/style.css            # Tailwind layers, transitions, and shell styles
 │   ├── tsconfig.json            # vue-tsc checks the renderer against the backend types
@@ -445,7 +459,7 @@ Artifacts are written to `release/`. The current package target is Apple Silicon
 - The app is not signed or notarized, so macOS requires the one-time approval described in [Install](#install).
 - Only `PATH` is imported from your login shell. Other variables exported in shell startup files (for example `JAVA_HOME`) are not passed to launched services; put them in the project's own environment files instead.
 - Windows and Linux packaging have not been implemented.
-- Resource graphs and historical metrics are not part of the first release.
+- Activity's graphs cover the last few minutes while the app is open; no history is kept beyond that.
 
 ## Lessons From the Build
 
@@ -460,6 +474,10 @@ Artifacts are written to `release/`. The current package target is Apple Silicon
 ## Roadmap
 
 Future work is tracked in [`upcoming-features.md`](./upcoming-features.md). Likely next steps include signed releases, additional operating systems, richer runtime support, and deeper browser/session controls.
+
+## Contributing
+
+Issues and pull requests are welcome: [`CONTRIBUTING.md`](./CONTRIBUTING.md) covers running it from source and the checks a change has to pass. Report security issues privately, as described in [`SECURITY.md`](./SECURITY.md).
 
 ## License
 

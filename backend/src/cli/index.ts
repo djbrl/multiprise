@@ -4,11 +4,13 @@ import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
 import { execFile } from 'node:child_process'
-import type { EnvironmentResponse, LogLine, ProcessInstance, UsedPort } from '../types'
+import { agentStatus, connectAgents, disconnectAgents } from '../agents'
+import type { AgentStatus, EnvironmentResponse, LogLine, ProcessInstance, RunningServer, UsageReport, UsedPort } from '../types'
 import { connect, NotRunningError, type MultipriseClient } from './client'
 import { runMcpServer } from './mcp'
 import {
   addFolders,
+  chooseRunningServers,
   dependencyNames,
   getEnvironment,
   getSettings,
@@ -21,11 +23,16 @@ import {
   processesOf,
   removeTargets,
   renameService,
+  runningServerName,
+  runningServers,
   serviceDetails,
+  usageReport,
   setCommand,
   setDependencies,
   setPort,
   setVariables,
+  stopRunningServer,
+  targetsToStart,
   unsetVariables,
   updateSettings,
   usedPorts
@@ -81,7 +88,7 @@ const VALUE_OPTIONS: Record<string, string> = {
 }
 const SWITCHES: Record<string, string> = {
   '--json': 'json', '-f': 'follow', '--follow': 'follow', '-y': 'yes', '--yes': 'yes', '--secret': 'secret',
-  '--auto': 'auto', '--clear': 'clear', '--dry-run': 'dryRun', '-h': 'help', '--help': 'help', '-v': 'version', '--version': 'version'
+  '--auto': 'auto', '--clear': 'clear', '--dry-run': 'dryRun', '--leftovers': 'leftovers', '-h': 'help', '--help': 'help', '-v': 'version', '--version': 'version'
 }
 
 type Args = {
@@ -168,6 +175,7 @@ function printResults(results: Array<StartResult | StopResult>, json: boolean) {
         break
       default:
         console.log(`${red('✕')} ${name}  ${red(result.error ?? result.outcome)}`)
+        if ('recent_logs' in result) for (const line of result.recent_logs ?? []) console.log(dim(`    ${line}`))
     }
   }
 }
@@ -211,6 +219,72 @@ function printPorts(ports: UsedPort[]) {
   for (const entry of ports) {
     console.log(`:${String(entry.port).padEnd(6)} ${(entry.project_name ?? '').padEnd(16)} ${entry.source.padEnd(8)} ${entry.pid ? `PID ${entry.pid}` : ''}`.trimEnd())
   }
+}
+
+function formatAge(startedAt: string | null) {
+  if (!startedAt) return '—'
+  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(startedAt)) / 60000))
+  if (minutes < 60) return `${minutes} min`
+  if (minutes < 60 * 48) return `${Math.floor(minutes / 60)} h`
+  return `${Math.floor(minutes / (60 * 24))} days`
+}
+
+function printRunning(servers: RunningServer[]) {
+  if (!servers.length) {
+    console.log('No dev servers are running.')
+    return
+  }
+  const ports = servers.map((server) => server.ports.map((port) => `:${port}`).join(' '))
+  const names = servers.map(runningServerName)
+  const portWidth = Math.max(...ports.map((text) => text.length))
+  const nameWidth = Math.max(...names.map((text) => text.length))
+  servers.forEach((server, index) => {
+    const icon = server.leftover ? yellow('!') : server.managed ? green('●') : dim('○')
+    console.log(`${icon} ${ports[index].padEnd(portWidth)}  ${names[index].padEnd(nameWidth)}  ${formatAge(server.started_at).padEnd(8)}  ${dim(server.command)}`)
+    if (server.leftover_reason) console.log(`  ${yellow(server.leftover_reason)}`)
+  })
+  const leftovers = servers.filter((server) => server.leftover).length
+  if (leftovers) console.log(dim(`\n${leftovers} leftover${leftovers === 1 ? '' : 's'}. \`multiprise running stop --leftovers\` stops ${leftovers === 1 ? 'it' : 'them'}.`))
+}
+
+const formatBytes = (bytes: number) =>
+  bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`
+
+function printUsage(report: UsageReport) {
+  const { machine } = report
+  const pressure = machine.memory_pressure ?? 'unknown'
+  console.log(`CPU     ${machine.cpu === null ? 'measuring' : `${Math.round(machine.cpu)}%`} of ${machine.cores} cores`)
+  console.log(`Memory  ${formatBytes(machine.memory_used)} of ${formatBytes(machine.memory_total)}, pressure ${pressure === 'normal' ? pressure : yellow(pressure)}, ${formatBytes(machine.swap_used)} swap`)
+  const rows = [
+    ...report.services.map((service) => ({ ...service, name: service.name === service.project ? service.name : `${service.project} / ${service.name}`, note: '' })),
+    ...report.servers.map(({ server, cpu, memory }) => ({ name: runningServerName(server), cpu, memory, note: server.leftover ? 'leftover' : 'outside' })),
+    ...report.containers.map(({ name, cpu, memory }) => ({ name, cpu, memory, note: 'docker' })),
+    { name: 'Multiprise', ...report.multiprise, note: 'this app' }
+  ].sort((a, b) => b.memory - a.memory)
+  const nameWidth = Math.max(...rows.map((row) => row.name.length))
+  console.log()
+  for (const row of rows) {
+    console.log(`${formatBytes(row.memory).padStart(8)}  ${`${row.cpu.toFixed(1)}%`.padStart(6)}  ${row.name.padEnd(nameWidth)}  ${row.note === 'leftover' ? yellow(row.note) : dim(row.note)}`.trimEnd())
+  }
+  if (!report.apps.length) return
+  console.log(`\n${dim('Everything else')}`)
+  const width = process.stdout.columns || 100
+  for (const app of report.apps) {
+    const line = `${formatBytes(app.memory).padStart(8)}  ${`${app.cpu.toFixed(1)}%`.padStart(6)}  ${app.name}`
+    const detail = app.detail ? `  ${app.detail}` : ''
+    console.log(`${line}${dim(detail.slice(0, Math.max(0, width - line.length)))}`)
+  }
+}
+
+function printAgents(status: AgentStatus) {
+  if (!status.installed) {
+    console.log('Claude Code is not installed, or `claude` is not on the PATH.')
+    return
+  }
+  const row = (on: boolean, text: string) => console.log(`${on ? green('●') : dim('○')} ${text}`)
+  row(status.connected, `MCP server ${status.connected ? 'registered with Claude Code for every project' : 'not registered'}`)
+  row(status.instructions, `Instructions ${status.instructions ? 'in' : 'not in'} ${tildify(status.instructions_path)}`)
+  if (!status.connected || !status.instructions) console.log(dim('\n`multiprise agents connect` sets up both.'))
 }
 
 const printLogLine = (entry: LogLine | ServiceLogLine, prefix = false) => {
@@ -318,6 +392,8 @@ type Command = {
   short?: string
   summary: string
   group: 'Services' | 'Projects' | 'Configuration' | 'Other'
+  // Works without the app, so it never opens it.
+  offline?: boolean
   // Longer help for `multiprise help <command>`.
   details?: string
   run: (context: Context) => Promise<number>
@@ -346,9 +422,11 @@ const COMMANDS: Command[] = [
     summary: 'Start services and wait until they are ready',
     group: 'Services',
     details: 'A project starts its supporting services, then backends, then frontends once a backend is ready.\n' +
-      'Services listed with `deps` start first. Services already running are left alone.',
+      'Services listed with `deps` start first. Services already running are left alone.\n' +
+      'A folder nothing tracks yet is tracked first; a git worktree counts as its own project.\n' +
+      'If a service fails, the output says why and how its logs ended (with --json too).',
     run: async ({ client, args, json }) => {
-      const results = await startTargets(client, await targetsFor(client, args.names), json ? undefined : status)
+      const results = await startTargets(client, await targetsToStart(client, args.names, json ? undefined : status), json ? undefined : status)
       printResults(results, json)
       return failed(results) ? 1 : 0
     }
@@ -495,6 +573,68 @@ const COMMANDS: Command[] = [
       if (json) printJson(ports)
       else printPorts(ports)
       return 0
+    }
+  },
+  {
+    names: ['usage'],
+    usage: 'usage',
+    short: 'usage',
+    summary: 'This Mac\'s CPU and memory, and how much each dev server takes',
+    group: 'Services',
+    details: 'CPU is a share of the whole machine, so 100% is every core busy. Memory is what Activity Monitor\n' +
+      'calls footprint, which includes what has been compressed or swapped out. Pressure says how hard\n' +
+      'macOS is working to find memory.',
+    run: async ({ client, json }) => {
+      const report = await usageReport(client)
+      if (json) printJson(report)
+      else printUsage(report)
+      return 0
+    }
+  },
+  {
+    names: ['running'],
+    usage: 'running [--leftovers] | running stop <port…> | running stop --leftovers [--yes]',
+    short: 'running [stop <port…>]',
+    summary: 'Every dev server on this Mac, whoever started it; stop one or all leftovers',
+    group: 'Services',
+    details: 'Lists servers started by terminals and coding agents as well as by Multiprise, with their\n' +
+      'project, worktree and age. Desktop apps and system services are left out.\n' +
+      'A leftover has lost the terminal or agent that started it, or its folder; it is a good guess,\n' +
+      'not a certainty. Stopping asks for confirmation; pass --yes when running without a terminal.',
+    run: async ({ client, args, json }) => {
+      const [action, ...rest] = args.names
+      const servers = await runningServers(client)
+      if (!action) {
+        const shown = args.options.leftovers ? servers.filter((server) => server.leftover) : servers
+        if (json) printJson(shown)
+        else printRunning(shown)
+        return 0
+      }
+      if (action !== 'stop') throw new UsageError(`Unknown running action "${action}"; use stop.`)
+      const ports = rest.map((port) => positiveInteger(port, 'A port', 0))
+      if (!ports.length && !args.options.leftovers) throw new UsageError('Name the ports to stop, or pass --leftovers.')
+      const chosen = chooseRunningServers(servers, ports, !!args.options.leftovers)
+      if (!chosen.length) {
+        if (json) printJson({ stopped: [] })
+        else console.log('There are no leftovers.')
+        return 0
+      }
+      const describe = (server: RunningServer) => `${runningServerName(server)} (${server.ports.map((port) => `:${port}`).join(' ')})`
+      if (!await confirm(`Stop ${chosen.map(describe).join(', ')}?`, args)) return 1
+      const stopped: string[] = []
+      let code = 0
+      for (const server of chosen) {
+        try {
+          await stopRunningServer(client, server)
+          stopped.push(describe(server))
+          if (!json) console.log(`${dim('○')} ${describe(server)}  stopped`)
+        } catch (err) {
+          code = 1
+          if (!json) console.log(`${red('✕')} ${describe(server)}  ${red(err instanceof Error ? err.message : String(err))}`)
+        }
+      }
+      if (json) printJson({ stopped })
+      return code
     }
   },
   {
@@ -726,6 +866,24 @@ const COMMANDS: Command[] = [
     }
   },
   {
+    names: ['agents'],
+    usage: 'agents [connect | disconnect]',
+    summary: 'Show, set up or remove Claude Code\'s use of Multiprise',
+    group: 'Other',
+    offline: true,
+    details: 'connect registers the MCP server for every project (claude mcp add --scope user) and adds a\n' +
+      'short block to ~/.claude/CLAUDE.md telling sessions to run dev servers through Multiprise.\n' +
+      'disconnect removes both, and leaves the rest of that file as it was.',
+    run: async ({ args, json }) => {
+      const [action] = args.names
+      if (action && action !== 'connect' && action !== 'disconnect') throw new UsageError(`Unknown agents action "${action}"; use connect or disconnect.`)
+      const result = action === 'connect' ? await connectAgents() : action === 'disconnect' ? await disconnectAgents() : await agentStatus()
+      if (json) printJson(result)
+      else printAgents(result)
+      return 0
+    }
+  },
+  {
     names: ['events'],
     usage: 'events',
     summary: 'Stream status changes and log lines as JSON, one event per line',
@@ -816,7 +974,8 @@ async function main(): Promise<number> {
   }
   const command = COMMANDS.find((entry) => entry.names.includes(args.command!))
   if (!command) throw new UsageError(`Unknown command "${args.command}". Run \`multiprise help\`.`)
-  const client = await connect({ launch: true, onStatus: status })
+  // An offline command does not use the client.
+  const client = command.offline ? null as unknown as MultipriseClient : await connect({ launch: true, onStatus: status })
   return command.run({ client, args, json: !!args.options.json })
 }
 

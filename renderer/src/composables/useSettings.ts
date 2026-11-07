@@ -18,7 +18,7 @@ const defaults = (): Settings => ({
   startup_timeout_ms: 20000,
   scan_depth: 8,
   scan_ignore: [],
-  theme: 'light'
+  theme: 'system'
 })
 
 const settings = reactive<Settings>(defaults())

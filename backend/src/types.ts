@@ -102,7 +102,9 @@ export type LogLine = {
   repeat?: number
 }
 
-export type ThemeName = 'light' | 'dark'
+// 'system' follows macOS: light or dark as the Mac is set.
+export type ThemeName = 'system' | 'light' | 'dark' | 'socket'
+export type ResolvedTheme = Exclude<ThemeName, 'system'>
 
 export type Settings = {
   auto_port: boolean
@@ -158,6 +160,99 @@ export type UsedPort = {
   source: ProcessSource
   pid?: number | null
   command?: string | null
+}
+
+// A server listening on this Mac, whoever started it.
+export type RunningServer = {
+  // Identifies this exact process or container; what /api/running/stop takes.
+  key: string
+  kind: 'process' | 'docker'
+  pid: number | null
+  ports: number[]
+  // The repository (or folder) it runs from.
+  project: string | null
+  path: string | null
+  // The worktree's name, when it runs from one.
+  worktree: string | null
+  // It runs from a temporary folder, such as an agent's scratchpad.
+  scratch: boolean
+  // The folder to add to track it; null when it should not be offered.
+  track_path: string | null
+  command: string
+  started_at: string | null
+  service_id: string | null
+  service_name: string | null
+  tracked: boolean
+  // Started and watched by Multiprise.
+  managed: boolean
+  leftover: boolean
+  leftover_reason: string | null
+}
+
+export type MemoryPressure = 'normal' | 'warning' | 'critical'
+
+export type MachineUsage = {
+  // Percent of the whole machine; null until there are two readings to compare.
+  cpu: number | null
+  cores: number
+  memory_used: number
+  memory_total: number
+  // How hard macOS is working to find memory, which says more than how much is in use.
+  memory_pressure: MemoryPressure | null
+  swap_used: number
+}
+
+// cpu is a percent of the whole machine, memory is in bytes.
+export type ResourceUse = { cpu: number; memory: number }
+
+export type ServiceUsage = ResourceUse & {
+  service_id: string
+  name: string
+  project: string
+  project_path: string
+}
+
+// A server Multiprise did not start.
+export type ServerUsage = ResourceUse & { server: RunningServer }
+
+// A Compose project, or a lone container, that is not tracked.
+export type ContainerUsage = ResourceUse & {
+  key: string
+  name: string
+  path: string | null
+  service_id: string | null
+  containers: number
+}
+
+// Everything else on the machine: an app with all its helper processes, a script with what it
+// started, a program, or a part of macOS.
+export type AppUsage = ResourceUse & {
+  key: string
+  kind: 'app' | 'script' | 'program' | 'system'
+  name: string
+  // What a script runs, or how many processes an app has.
+  detail: string | null
+  // The app bundle, or the folder a script runs in.
+  path: string | null
+  processes: number
+}
+
+export type UsageReport = {
+  machine: MachineUsage
+  multiprise: ResourceUse
+  services: ServiceUsage[]
+  servers: ServerUsage[]
+  containers: ContainerUsage[]
+  // The heaviest of everything else, by memory and by CPU; empty until first measured.
+  apps: AppUsage[]
+}
+
+// Whether Claude Code is set up to run dev servers through Multiprise.
+export type AgentStatus = {
+  installed: boolean
+  connected: boolean
+  instructions: boolean
+  instructions_path: string
 }
 
 export type DiscoveredService = {

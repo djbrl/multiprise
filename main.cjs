@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, nativeTheme, session, shell } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
@@ -496,7 +496,8 @@ const createWindow = () => {
     // Below this the header, service cards and logs start to overlap.
     minWidth: 960,
     minHeight: 600,
-    backgroundColor: '#f3f4f6',
+    // Matches the theme the window most likely opens in, so it doesn't flash white in dark mode.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#111113' : '#ffffff',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 14 },
     show: false,

@@ -24,7 +24,7 @@ const ACTIONS: Partial<Record<FailureCode, Array<{ action: FailureAction; label:
   'not-responding': [{ action: 'restart', label: 'Restart' }]
 }
 
-// The existing-instance case has its own "Unplug and retry" prompt in the service card.
+// The existing-instance case has its own "Stop it and retry" prompt in the service card.
 const actions = computed(() => props.code === 'existing-instance'
   ? []
   : (props.code ? ACTIONS[props.code] : undefined) ?? [{ action: 'retry' as FailureAction, label: 'Retry' }])

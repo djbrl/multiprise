@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import multipriseIconUrl from '../assets/multiprise-icon.svg'
+import { useAgents } from '../composables/useAgents'
 import { apiFetch } from '../lib/api'
 import { type ProjectInspectResult } from '../types'
-import { btnPanelPrimaryLg, btnPanelSecondary, noScrollbar, spinnerClass } from '../ui'
+import { btnPanelPrimaryLg, btnPanelSecondary, noScrollbar, panelClass, spinnerClass } from '../ui'
 
 // First run: what Multiprise does, adding the first projects, and the optional CLI/MCP setup.
 
 const emit = defineEmits<{ done: []; 'projects-added': [] }>()
 
-const MCP_SETUP_COMMAND = 'claude mcp add multiprise -- multiprise mcp'
+const { agentStatus, agentsBusy, agentsFailure, agentsConnected, loadAgentStatus, connectAgents } = useAgents()
 const steps = ['Welcome', 'Projects', 'Terminal', 'Ready'] as const
 const step = ref(0)
 
@@ -22,7 +23,6 @@ const error = ref('')
 
 const cli = ref<CommandLineToolStatus | null>(null)
 const installingCli = ref(false)
-const copied = ref(false)
 
 const addable = computed(() => folders.value.filter((folder) => previews[folder]?.has_services))
 const serviceCount = computed(() => addable.value.reduce((total, folder) => total + (previews[folder]?.services?.length ?? 0), 0))
@@ -94,14 +94,9 @@ async function installCli() {
   }
 }
 
-async function copyMcp() {
-  await window.vibe?.copyText?.(MCP_SETUP_COMMAND)
-  copied.value = true
-  window.setTimeout(() => { copied.value = false }, 1600)
-}
-
 onMounted(async () => {
   cli.value = (await window.vibe?.cli?.status().catch(() => null)) ?? null
+  await loadAgentStatus()
 })
 
 defineExpose({
@@ -120,6 +115,7 @@ const roleTone: Record<string, string> = {
 
 <template>
   <div class="fixed inset-0 z-[65] flex items-center justify-center bg-[var(--app-bg)] p-6">
+    <div class="app-drag-region absolute inset-x-0 top-0 h-9"></div>
     <div class="flex h-full max-h-[640px] w-full max-w-[640px] flex-col">
       <div class="flex items-center justify-center gap-2">
         <span
@@ -135,14 +131,14 @@ const roleTone: Record<string, string> = {
         <!-- 1. Welcome -->
         <section v-if="step === 0" key="welcome" class="flex flex-1 flex-col items-center justify-center text-center">
           <img :src="multipriseIconUrl" alt="" class="h-20 w-20" />
-          <h1 class="mt-6 text-3xl font-semibold tracking-[-0.04em] text-[var(--text-strong)]">Welcome to Multiprise</h1>
+          <h1 class="mt-6 text-2xl font-semibold tracking-[-0.02em] text-[var(--text-strong)]">Welcome to Multiprise</h1>
           <p class="mt-2 max-w-md text-[15px] leading-6 text-[var(--text-muted)]">One place to start, watch and stop every local project you work on.</p>
           <div class="mt-9 grid w-full gap-3 text-left sm:grid-cols-3">
             <div v-for="feature in [
               { title: 'Finds the services', body: 'Point it at a project folder; it reads package.json, Cargo and Compose files.' },
               { title: 'Stable ports', body: 'Each service gets a free port, and keeps it, so URLs never change.' },
               { title: 'Everything in view', body: 'Logs, crashes, restarts and URLs for all of them, in one window.' }
-            ]" :key="feature.title" class="rounded-xl border border-[var(--border)] bg-[var(--panel-bg)] p-4">
+            ]" :key="feature.title" class="p-4" :class="panelClass">
               <p class="text-sm font-semibold text-[var(--text-strong)]">{{ feature.title }}</p>
               <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">{{ feature.body }}</p>
             </div>
@@ -152,12 +148,12 @@ const roleTone: Record<string, string> = {
 
         <!-- 2. Projects -->
         <section v-else-if="step === 1" key="projects" class="flex min-h-0 flex-1 flex-col pt-10">
-          <h1 class="text-2xl font-semibold tracking-[-0.03em] text-[var(--text-strong)]">Add your projects</h1>
+          <h1 class="text-2xl font-semibold tracking-[-0.02em] text-[var(--text-strong)]">Add your projects</h1>
           <p class="mt-1 text-sm text-[var(--text-muted)]">Choose the top folder of each project. You will see what Multiprise finds before anything is saved.</p>
 
           <button
             type="button"
-            class="mt-6 flex shrink-0 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[var(--border)] px-6 py-8 text-center transition-colors hover:border-[var(--electric)] hover:bg-[var(--hover)]"
+            class="mt-6 flex shrink-0 flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-[var(--border)] px-6 py-8 text-center transition-colors hover:border-[var(--electric)] hover:bg-[var(--hover)]"
             :disabled="choosing"
             @click="chooseFolders"
           >
@@ -171,7 +167,7 @@ const roleTone: Record<string, string> = {
           </button>
 
           <div v-if="folders.length" class="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto" :class="noScrollbar">
-            <div v-for="folder in folders" :key="folder" class="rounded-xl border border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3" :class="previews[folder] && !previews[folder].has_services ? 'opacity-60' : ''">
+            <div v-for="folder in folders" :key="folder" class="rounded-lg border border-[var(--border)] bg-[var(--panel-bg)] px-4 py-3" :class="previews[folder] && !previews[folder].has_services ? 'opacity-60' : ''">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                   <p class="truncate text-sm font-semibold text-[var(--text-strong)]">{{ previews[folder]?.name ?? folder.split('/').pop() }}</p>
@@ -184,7 +180,7 @@ const roleTone: Record<string, string> = {
               <div v-else class="mt-2 flex flex-wrap gap-1.5">
                 <span v-for="preview in previews[folder].services" :key="preview.name + preview.start" class="inline-flex items-center gap-1.5 rounded-md bg-[var(--panel-muted)] px-2 py-1 text-[11px]">
                   <span class="font-semibold" :class="roleTone[preview.role] ?? 'text-[var(--text)]'">{{ preview.name }}</span>
-                  <span class="font-mono text-[10px] text-[var(--text-subtle)]">{{ preview.start }}</span>
+                  <span class="font-mono text-[11px] text-[var(--text-subtle)]">{{ preview.start }}</span>
                 </span>
               </div>
             </div>
@@ -203,10 +199,10 @@ const roleTone: Record<string, string> = {
 
         <!-- 3. Terminal and agents -->
         <section v-else-if="step === 2" key="terminal" class="flex flex-1 flex-col justify-center">
-          <h1 class="text-2xl font-semibold tracking-[-0.03em] text-[var(--text-strong)]">Use it from your terminal and coding agents</h1>
+          <h1 class="text-2xl font-semibold tracking-[-0.02em] text-[var(--text-strong)]">Use it from your terminal and coding agents</h1>
           <p class="mt-1 text-sm text-[var(--text-muted)]">Optional. You can set this up later in Settings.</p>
 
-          <div class="mt-7 rounded-xl border border-[var(--border)] bg-[var(--panel-bg)] p-5">
+          <div class="mt-7 p-4" :class="panelClass">
             <div class="flex items-start justify-between gap-4">
               <div>
                 <p class="text-sm font-semibold text-[var(--text-strong)]">The <span class="font-mono">multiprise</span> command</p>
@@ -222,12 +218,20 @@ const roleTone: Record<string, string> = {
             </div>
           </div>
 
-          <div class="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-bg)] p-5">
-            <p class="text-sm font-semibold text-[var(--text-strong)]">Coding agents (MCP)</p>
-            <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">Agents reuse the services you already run, read their logs and get their URLs, instead of starting duplicates.</p>
-            <div class="mt-3 flex items-center justify-between gap-3 rounded-lg bg-[var(--panel-muted)] px-3 py-2">
-              <span class="min-w-0 truncate font-mono text-xs text-[var(--text)]">{{ MCP_SETUP_COMMAND }}</span>
-              <button type="button" class="shrink-0 text-xs text-[var(--text-muted)] hover:text-[var(--text-strong)]" @click="copyMcp">{{ copied ? 'Copied' : 'Copy' }}</button>
+          <div class="mt-3 p-4" :class="panelClass">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <p class="text-sm font-semibold text-[var(--text-strong)]">Claude Code</p>
+                <p class="mt-1 text-xs leading-5 text-[var(--text-muted)]">
+                  Sessions start servers through Multiprise, so they get free ports and reuse what is running. This registers the MCP server and adds a short note to <span class="font-mono">{{ agentStatus?.instructions_path ?? '~/.claude/CLAUDE.md' }}</span>. Settings can undo it.
+                </p>
+                <p v-if="agentsFailure" class="mt-1 text-xs text-[var(--warning-text)]" role="alert">{{ agentsFailure }}</p>
+              </div>
+              <span v-if="agentsConnected" class="shrink-0 text-xs font-medium text-[var(--success-text)]">Connected</span>
+              <button v-else-if="agentStatus?.installed" :class="btnPanelSecondary" class="shrink-0" :disabled="agentsBusy" @click="connectAgents">
+                {{ agentsBusy ? 'Connecting…' : 'Connect' }}
+              </button>
+              <span v-else class="shrink-0 text-xs text-[var(--text-subtle)]">Not found on this Mac</span>
             </div>
           </div>
 
@@ -239,10 +243,10 @@ const roleTone: Record<string, string> = {
 
         <!-- 4. Ready -->
         <section v-else key="ready" class="flex flex-1 flex-col items-center justify-center text-center">
-          <div class="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--electric)] text-white">
+          <div class="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--live)] text-white">
             <svg viewBox="0 0 24 24" class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </div>
-          <h1 class="mt-6 text-2xl font-semibold tracking-[-0.03em] text-[var(--text-strong)]">You're set</h1>
+          <h1 class="mt-6 text-2xl font-semibold tracking-[-0.02em] text-[var(--text-strong)]">You're set</h1>
           <p class="mt-2 max-w-md text-sm leading-6 text-[var(--text-muted)]">
             {{ addedCount ? `${addedCount} project${addedCount === 1 ? ' is' : 's are'} ready. Press Launch on one to start its services, backend first.` : 'Add a project whenever you like, from the home screen or by dropping a folder on the window.' }}
           </p>

@@ -34,9 +34,9 @@ const { groupActionLoading, groupPrimaryAction, deleteGroup } = useServiceAction
                 groupActionLoading[groupMenu.group.key] === 'launch'
                   ? 'Cancel launch'
                   : groupActionLoading[groupMenu.group.key] === 'stop'
-                  ? 'Unplugging…'
+                  ? 'Stopping…'
                   : groupHasRunning(groupMenu.group)
-                  ? 'Unplug'
+                  ? 'Stop'
                   : 'Launch'
               }}
             </span>

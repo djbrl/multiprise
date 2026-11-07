@@ -17,8 +17,10 @@ import { forgetDockerProject } from '../docker'
 import { openFileInEditor, openInFileManager, openInVSCode } from '../commands'
 import { findProjectIcon, resolveProjectIcon } from '../icons'
 import { buildProjectView, cancelLaunch, validateLinks } from '../launch'
-import { describeEnvironment, envFileStatus, saveEnvironment, secrets } from '../environment'
+import { describeEnvironment, envFileStatus, knownSecrets, saveEnvironment, secrets } from '../environment'
+import { redactText } from '../redact'
 import { cleanPath, handle, isSameOrInside, isValidPort, stringArray } from '../http'
+import { isWorktreeRoot } from '../repository'
 import { type ApiContext } from './context'
 
 async function noServicesMessage(projectPath: string) {
@@ -33,10 +35,23 @@ async function noServicesMessage(projectPath: string) {
   return 'No runnable package.json, Cargo.toml, or Docker Compose services found'
 }
 
+// Failure messages quote the service's output.
+async function redactedView(view: ReturnType<typeof buildProjectView>) {
+  const { status, project } = view
+  if (!status.error && !project.last_error) return view
+  const values = await knownSecrets(project)
+  return {
+    ...view,
+    project: { ...project, last_error: project.last_error && redactText(project.last_error, values) },
+    status: { ...status, error: status.error && redactText(status.error, values) }
+  }
+}
+
 export function registerProjectRoutes(app: Express, { state, launches }: ApiContext) {
-  app.get('/api/projects', (_req: Request, res: Response) => {
-    res.json({ projects: state.projects.map(buildProjectView) })
-  })
+  app.get('/api/projects', handle(async (req: Request, res: Response) => {
+    const views = state.projects.map(buildProjectView)
+    res.json({ projects: req.query.redact ? await Promise.all(views.map(redactedView)) : views })
+  }))
 
   app.get('/api/projects/:id/favicon', handle(async (req: Request, res: Response) => {
     const project = state.projects.find((entry) => entry.id === req.params.id)
@@ -66,9 +81,10 @@ export function registerProjectRoutes(app: Express, { state, launches }: ApiCont
     if (state.projects.some((project) => cleanPath(project.root_path ?? project.path) === projectPath)) {
       return res.status(400).send('Project already exists')
     }
-    const overlapping = state.projects.find((project) => {
+    // A worktree is its own checkout, even inside the main one (.claude/worktrees/<name>).
+    const overlapping = isWorktreeRoot(projectPath) ? undefined : state.projects.find((project) => {
       const existingRoot = cleanPath(project.root_path ?? project.path)
-      return isSameOrInside(projectPath, existingRoot) || isSameOrInside(existingRoot, projectPath)
+      return !isWorktreeRoot(existingRoot) && (isSameOrInside(projectPath, existingRoot) || isSameOrInside(existingRoot, projectPath))
     })
     if (overlapping) {
       return res.status(400).send(`This folder overlaps the tracked project at ${cleanPath(overlapping.root_path ?? overlapping.path)}`)

@@ -2,6 +2,7 @@ import readline from 'node:readline'
 import { ApiError, connect, type MultipriseClient } from './client'
 import {
   addFolders,
+  chooseRunningServers,
   dependencyNames,
   getEnvironment,
   getSettings,
@@ -11,11 +12,16 @@ import {
   processesOf,
   removeTargets,
   renameService,
+  runningServerName,
+  runningServers,
   serviceDetails,
+  usageReport,
   setCommand,
   setDependencies,
   setPort,
   setVariables,
+  stopRunningServer,
+  targetsToStart,
   unsetVariables,
   updateSettings,
   usedPorts
@@ -74,7 +80,9 @@ const summarize = (service: Service) => ({
 const summarizeResults = (results: Array<StartResult | StopResult>) => results.map((result) => ({
   ...summarize(result.service),
   outcome: result.outcome,
-  ...(result.error ? { error: result.error } : {})
+  ...(result.error ? { error: result.error } : {}),
+  ...('failure_code' in result && result.failure_code ? { failure_code: result.failure_code } : {}),
+  ...('recent_logs' in result && result.recent_logs?.length ? { recent_logs: result.recent_logs } : {})
 }))
 
 async function target(client: MultipriseClient, query: unknown) {
@@ -109,9 +117,14 @@ const TOOLS: Tool[] = [
     name: 'start_service',
     description: 'Start a service, or every service of a project, and wait until it accepts connections. ' +
       'Multiprise assigns a free port, keeps the previous one when possible, and wires BACKEND_PORT/FRONTEND_PORT between siblings. ' +
-      'Services it depends on start first, and services that are already running are left alone. Returns each service\'s URL.',
+      'Services it depends on start first, and services that are already running are left alone. Returns each service\'s URL, or, ' +
+      'when one fails, its error, failure_code and recent_logs. Given the absolute path of a folder nothing tracks yet, such as the ' +
+      'current project or git worktree, it tracks that folder first; a worktree counts as its own project.',
     inputSchema: { type: 'object', properties: { service: serviceArgument }, required: ['service'] },
-    run: async (client, args) => summarizeResults(await startTargets(client, [await target(client, args.service)]))
+    run: async (client, args) => {
+      if (typeof args.service !== 'string' || !args.service.trim()) throw new ToolError('Name a service or project, or give a folder path.')
+      return summarizeResults(await startTargets(client, await targetsToStart(client, [args.service.trim()])))
+    }
   },
   {
     name: 'stop_service',
@@ -303,6 +316,49 @@ const TOOLS: Tool[] = [
     })
   },
   {
+    name: 'list_running_servers',
+    description: 'Every dev server on this Mac, whoever started it (terminals, coding agents, Multiprise), with its ports, project, worktree, age and command. ' +
+      'Desktop apps and system services are left out. leftover is true when the terminal or agent that started it is gone, or its folder is. ' +
+      'Use it when a port is taken, or to find a server list_services does not know about.',
+    inputSchema: {
+      type: 'object',
+      properties: { leftovers_only: { type: 'boolean', default: false } }
+    },
+    annotations: { readOnlyHint: true },
+    run: async (client, args) => {
+      const servers = await runningServers(client)
+      return args.leftovers_only ? servers.filter((server) => server.leftover) : servers
+    }
+  },
+  {
+    name: 'get_usage',
+    description: 'This machine\'s CPU, memory and memory pressure, what each dev server takes, whoever started it, and the heaviest apps, scripts and processes besides (apps). cpu is a percent of the whole machine; memory is in bytes. ' +
+      'Use it when the machine is slow, or before starting something heavy. memory_pressure says more than memory_used: macOS keeps memory full on purpose.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true },
+    run: async (client) => usageReport(client)
+  },
+  {
+    name: 'stop_running_server',
+    description: 'Stop servers from list_running_servers, by port or all leftovers. It may belong to someone else\'s work: ' +
+      'only stop one you started, or when the user asked you to. Services Multiprise started are stopped the same way as stop_service.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ports: { type: 'array', items: { type: 'integer' }, description: 'Ports of the servers to stop.' },
+        leftovers: { type: 'boolean', default: false, description: 'Stop every server marked leftover.' }
+      }
+    },
+    annotations: { destructiveHint: true },
+    run: async (client, args) => {
+      const ports = (Array.isArray(args.ports) ? args.ports : []).map(Number)
+      if (!ports.length && !args.leftovers) throw new ToolError('Give the ports to stop, or set leftovers.')
+      const chosen = chooseRunningServers(await runningServers(client), ports, !!args.leftovers)
+      for (const server of chosen) await stopRunningServer(client, server)
+      return { stopped: chosen.map((server) => ({ name: runningServerName(server), ports: server.ports })) }
+    }
+  },
+  {
     name: 'prepare_service',
     description: 'Install a stopped service\'s dependencies, or run its build, e.g. after a start failed because they were missing.',
     inputSchema: {
@@ -388,6 +444,8 @@ export async function runMcpServer(version: string) {
           serverInfo: { name: 'multiprise', version },
           instructions: 'Multiprise runs the local dev servers of the user\'s projects. Before starting a dev server with a shell command, ' +
             'call list_services: reuse a running service\'s URL, or start it with start_service so it gets a stable, conflict-free port. ' +
+            'start_service also takes the absolute path of the current folder, tracking it if needed, including a git worktree. ' +
+            'list_running_servers shows every server on the machine, including those started outside Multiprise. ' +
             'Use tail_logs to read a service\'s output and get_service for its configuration and last error. ' +
             'add_project, configure_service, set_environment and set_dependencies change how services run; ' +
             'list_processes and kill_process free a port held by a stray process.'

@@ -9,14 +9,14 @@ module.exports = {
     extend: {
       fontFamily: {
         sans: [
-          "Avenir Next",
-          "Trebuchet MS",
-          "Segoe UI",
+          "Inter Variable",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "Helvetica Neue",
           "sans-serif"
         ],
         mono: [
-          "JetBrains Mono",
-          "IBM Plex Mono",
+          "JetBrains Mono Variable",
           "ui-monospace",
           "SFMono-Regular",
           "Menlo",

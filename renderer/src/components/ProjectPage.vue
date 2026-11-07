@@ -6,9 +6,9 @@ import { useLogs } from '../composables/useLogs'
 import { useNavigation } from '../composables/useNavigation'
 import { useProjects } from '../composables/useProjects'
 import { useServiceActions } from '../composables/useServiceActions'
-import { groupAccentStyle, groupHasNpmServices, groupHasRunning, groupInitials, groupReadyCount, groupServiceCount, isDockerService } from '../lib/services'
+import { groupHasNpmServices, groupHasRunning, groupInitials, groupReadyCount, groupServiceCount, isDockerService } from '../lib/services'
 import { readStored, STORAGE_KEYS, writeStored } from '../lib/storage'
-import { btnPanelPrimaryLg, btnPanelSecondary, btnUnplugLg, noScrollbar, panelProjectClass, spinnerClass } from '../ui'
+import { btnPanelPrimaryLg, btnPanelSecondary, btnUnplugLg, noScrollbar, panelProjectClass, spinnerClass, statusDot, statusDotLive } from '../ui'
 import BrowserPanel from './BrowserPanel.vue'
 import DockerServices from './DockerServices.vue'
 import LogViewer from './LogViewer.vue'
@@ -28,7 +28,7 @@ const dockerServices = computed(() => selectedGroup.value?.items.filter(isDocker
 
 // The services pane can be resized or collapsed; its share of the width is remembered.
 const DEFAULT_SPLIT = 0.38
-const DIVIDER_WIDTH = 10
+const DIVIDER_WIDTH = 1
 const servicesPaneCollapsed = ref(false)
 const serviceSplitRatio = ref(DEFAULT_SPLIT)
 const splitContainerWidth = ref(0)
@@ -123,64 +123,48 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div
-    class="flex h-full w-full min-h-0 flex-col overflow-hidden rounded-2xl"
-    :class="[panelProjectClass, noScrollbar]"
-    :style="selectedGroup ? groupAccentStyle(selectedGroup) : undefined"
-  >
-    <div v-if="loading" class="flex items-center text-sm text-[var(--text-subtle)]">
+  <div class="flex h-full w-full min-h-0 flex-col overflow-hidden" :class="[panelProjectClass, noScrollbar]">
+    <div v-if="loading" class="flex items-center p-4">
       <span :class="spinnerClass" aria-hidden="true"></span>
       <span class="sr-only">Loading projects</span>
     </div>
     <div
       v-if="error"
-      class="mb-3 flex items-start justify-between gap-3 rounded-xl bg-[var(--danger-bg)] px-3 py-2 text-sm text-[var(--danger-text)]"
+      class="flex items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--danger-bg)] px-4 py-2 text-[13px] text-[var(--danger-text)]"
       role="alert"
     >
       <span class="min-w-0 break-words">{{ error }}</span>
       <button class="shrink-0 rounded px-1 opacity-70 hover:opacity-100" aria-label="Dismiss error" @click="error = ''">×</button>
     </div>
-    <div v-if="!selectedGroup" class="flex h-full flex-col items-center justify-center text-center text-[var(--text-muted)]">
-      <p class="text-sm text-[var(--text-subtle)]">Choose a tracked project from the sidebar.</p>
+    <div v-if="!selectedGroup" class="flex h-full flex-col items-center justify-center text-center">
+      <p class="text-[13px] text-[var(--text-subtle)]">Choose a project from the sidebar.</p>
       <button class="mt-4" :class="btnPanelSecondary" @click="goHome">Go home</button>
     </div>
     <transition v-else name="project-switch" mode="out-in">
       <div :key="selectedGroup.key" class="flex h-full min-h-0 flex-col">
-      <div class="relative flex h-[82px] shrink-0 items-center justify-between gap-4 overflow-hidden border-b border-[var(--border)] px-5">
-        <div class="flex min-w-0 items-center gap-3">
-          <div class="flex items-center gap-2">
-            <span
-              class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[var(--panel-muted)] text-sm font-semibold text-[var(--text-muted)]"
-            >
-              <img
-                v-if="groupFaviconUrl(selectedGroup)"
-                :src="groupFaviconUrl(selectedGroup)"
-                class="h-full w-full object-cover"
-                alt=""
-                @error="handleFaviconError(selectedGroup)"
-              />
-              <span v-else>{{ groupInitials(selectedGroup) }}</span>
-            </span>
-          </div>
-          <div class="min-w-0">
-            <p class="truncate text-xl font-semibold tracking-[-0.02em] text-[var(--text-strong)]">
-              {{ selectedGroup.name }}
-            </p>
-            <button
-              class="mt-0.5 inline-flex max-w-full items-center gap-1.5 rounded-md text-[11px] text-[var(--text-subtle)] transition-colors hover:text-[var(--text)]"
-              @click="openProjectInEditorOrFinder(selectedGroup)"
-              title="View source code"
-            >
-              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M8 8l-4 4 4 4M16 8l4 4-4 4" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              <span class="truncate">{{ selectedGroup.path }}</span>
-            </button>
-          </div>
+      <header class="page-header flex h-[52px] shrink-0 items-center justify-between gap-4 border-b border-[var(--border)] px-4">
+        <div class="flex min-w-0 items-center gap-2.5">
+          <span class="project-mark flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[var(--border)] bg-[var(--panel-muted)] text-[11px] font-semibold text-[var(--text-muted)]">
+            <img
+              v-if="groupFaviconUrl(selectedGroup)"
+              :src="groupFaviconUrl(selectedGroup)"
+              class="h-full w-full object-cover"
+              alt=""
+              @error="handleFaviconError(selectedGroup)"
+            />
+            <span v-else>{{ groupInitials(selectedGroup) }}</span>
+          </span>
+          <h1 class="shrink-0 text-sm font-semibold text-[var(--text-strong)]">{{ selectedGroup.name }}</h1>
+          <button
+            class="min-w-0 truncate font-mono text-xs text-[var(--text-subtle)] transition-colors hover:text-[var(--text-strong)]"
+            title="View source code"
+            @click="openProjectInEditorOrFinder(selectedGroup)"
+          >{{ selectedGroup.path }}</button>
         </div>
-        <div class="flex items-center justify-end gap-3">
-          <span v-if="groupHasNpmServices(selectedGroup)" class="text-xs font-medium text-[var(--text-muted)]">
-            {{ groupReadyCount(selectedGroup) }}/{{ groupServiceCount(selectedGroup) }} ready
+        <div class="flex shrink-0 items-center justify-end gap-3">
+          <span v-if="groupHasNpmServices(selectedGroup)" class="flex items-center gap-1.5 text-xs" :class="groupReadyCount(selectedGroup) ? 'text-[var(--live-text)]' : 'text-[var(--text-muted)]'">
+            <span :class="[statusDot, groupReadyCount(selectedGroup) ? statusDotLive : '']"></span>
+            {{ groupReadyCount(selectedGroup) }} of {{ groupServiceCount(selectedGroup) }} ready
           </span>
           <button
             :class="groupHasRunning(selectedGroup) || groupActionLoading[selectedGroup.key] === 'launch' ? btnUnplugLg : btnPanelPrimaryLg"
@@ -188,25 +172,22 @@ onBeforeUnmount(() => {
             :title="groupActionLoading[selectedGroup.key] === 'launch' ? 'Stop this launch' : undefined"
             @click="groupPrimaryAction(selectedGroup, groupHasRunning(selectedGroup))"
           >
-            <span v-if="groupActionLoading[selectedGroup.key]" :class="spinnerClass" aria-hidden="true"></span>
-            <svg v-else-if="!groupHasRunning(selectedGroup)" viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M8 6l10 6-10 6z" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
+            <span v-if="groupActionLoading[selectedGroup.key]" :class="[spinnerClass, '!h-3 !w-3']" aria-hidden="true"></span>
             {{
               groupActionLoading[selectedGroup.key] === 'launch'
                 ? groupLaunchCancelled[selectedGroup.key] ? 'Cancelling…' : 'Cancel launch'
                 : groupActionLoading[selectedGroup.key] === 'stop'
-                ? 'Unplugging…'
+                ? 'Stopping…'
                 : groupHasRunning(selectedGroup)
-                ? 'Unplug'
+                ? 'Stop all'
                 : 'Launch'
             }}
           </button>
         </div>
-      </div>
+      </header>
       <div
         v-if="selectedGroup.items.length && vscodeErrors[selectedGroup.items[0].project.id]"
-        class="mx-5 mt-3 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning-text)]"
+        class="border-b border-[var(--warning-border)] bg-[var(--warning-bg)] px-4 py-2 text-xs text-[var(--warning-text)]"
       >
         {{ vscodeErrors[selectedGroup.items[0].project.id] }}
       </div>
@@ -220,107 +201,97 @@ onBeforeUnmount(() => {
           <!-- Explicit columns: v-show's display:none would otherwise shift the panes into the collapsed 0px tracks. -->
           <div
             v-show="!servicesPaneCollapsed"
-            class="relative col-start-1 row-start-1 flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-y-auto p-4"
+            class="relative col-start-1 row-start-1 flex h-full min-h-0 min-w-0 flex-col overflow-y-auto"
             :class="noScrollbar"
           >
-            <div class="rounded-2xl bg-[var(--panel-bg)] p-3">
-              <div class="relative flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2">
-                  <svg viewBox="0 0 24 24" class="h-4 w-4 text-[var(--text-subtle)]" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <path d="M5 6h14v4H5z" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M5 14h14v4H5z" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                  <p class="text-[15px] font-semibold text-[var(--text-strong)]">Services</p>
-                </div>
-                <button
-                  type="button"
-                  class="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[var(--text-subtle)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text-strong)]"
-                  title="Collapse services"
-                  aria-label="Collapse services"
-                  @click="toggleServicesPane"
-                >
-                  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6">
-                    <path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </button>
-              </div>
-              <div class="mt-3 space-y-2">
-                <div v-if="npmServices.length === 0" class="text-sm text-[var(--text-subtle)]">
-                  No script services found.
-                </div>
-                <ServiceCard v-for="service in npmServices" :key="service.project.id" :service="service" />
-              </div>
+            <div class="flex h-[42px] shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] pl-4 pr-2">
+              <h2 class="text-[13px] font-medium text-[var(--text-strong)]">
+                Services <span class="font-normal text-[var(--text-subtle)]">{{ npmServices.length }}</span>
+              </h2>
+              <button
+                type="button"
+                class="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-subtle)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text-strong)]"
+                title="Collapse services"
+                aria-label="Collapse services"
+                @click="toggleServicesPane"
+              >
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M15 5l-7 7 7 7" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
             </div>
-
+            <p v-if="npmServices.length === 0" class="border-b border-[var(--border)] px-4 py-3 text-[13px] text-[var(--text-subtle)]">No script services found.</p>
+            <ServiceCard v-for="service in npmServices" :key="service.project.id" :service="service" />
             <DockerServices v-if="dockerServices.length" :services="dockerServices" />
-
           </div>
 
           <button
             v-show="!servicesPaneCollapsed"
             type="button"
-            class="group relative z-10 col-start-2 row-start-1 flex h-full min-h-0 cursor-col-resize touch-none items-center justify-center outline-none"
+            class="group relative z-10 col-start-2 row-start-1 h-full min-h-0 cursor-col-resize touch-none bg-[var(--border)] outline-none transition-colors hover:bg-[var(--text-subtle)] focus-visible:bg-[var(--text-subtle)]"
             title="Drag to resize · Double-click to reset"
             aria-label="Resize services and output panels"
             @pointerdown="startServiceResize"
             @dblclick="resetServiceSplit"
           >
-            <span class="h-10 w-1 rounded-full bg-[var(--border)] transition-colors group-hover:bg-[var(--primary)]"></span>
+            <span class="absolute inset-y-0 -left-1 -right-1"></span>
           </button>
 
-          <div class="col-start-3 row-start-1 flex h-full min-h-0 min-w-0 flex-col p-4">
-            <div class="focus-panel relative flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-[#343434] p-4">
-              <div class="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 pb-3">
-                <div class="flex min-w-0 items-center gap-2">
+          <div class="col-start-3 row-start-1 flex h-full min-h-0 min-w-0 flex-col">
+            <div class="flex h-[42px] shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] px-4">
+              <div class="flex h-full min-w-0 items-center gap-4">
+                <button
+                  v-if="servicesPaneCollapsed"
+                  type="button"
+                  class="inline-flex h-7 items-center gap-1 rounded-md pr-2 text-xs text-[var(--text-muted)] transition-colors hover:text-[var(--text-strong)]"
+                  title="Show services"
+                  @click="toggleServicesPane"
+                >
+                  <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  Services
+                </button>
+                <div class="flex h-full items-stretch gap-4" role="tablist" aria-label="Project output">
                   <button
-                    v-if="servicesPaneCollapsed"
-                    type="button"
-                    class="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[11px] font-medium text-white/55 transition-colors hover:bg-white/10 hover:text-white"
-                    title="Show services"
-                    @click="toggleServicesPane"
-                  >
-                    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6">
-                      <path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                    Services
-                  </button>
-                  <div class="flex items-center rounded-lg bg-black/15 p-1" role="tablist" aria-label="Project output">
-                  <button
-                    class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
-                    :class="projectPanelMode === 'logs' ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white'"
+                    role="tab"
+                    :aria-selected="projectPanelMode === 'logs'"
+                    class="-mb-px border-b-2 text-[13px] transition-colors"
+                    :class="projectPanelMode === 'logs' ? 'border-[var(--text-strong)] font-medium text-[var(--text-strong)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-strong)]'"
                     @click="projectPanelMode = 'logs'"
                   >
                     Logs
                   </button>
                   <button
-                    class="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors"
-                    :class="projectPanelMode === 'browser' ? 'bg-white/[0.12] text-white' : 'text-white/55 hover:text-white'"
+                    role="tab"
+                    :aria-selected="projectPanelMode === 'browser'"
+                    class="-mb-px flex items-center gap-1.5 border-b-2 text-[13px] transition-colors"
+                    :class="projectPanelMode === 'browser' ? 'border-[var(--text-strong)] font-medium text-[var(--text-strong)]' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-strong)]'"
                     @click="projectPanelMode = 'browser'"
                   >
                     Browser
-                    <span v-if="browserState.tabs.length" class="rounded bg-white/10 px-1.5 py-0.5 text-[9px] text-white/70">{{ browserState.tabs.length }}</span>
+                    <span v-if="browserState.tabs.length" class="text-xs font-normal text-[var(--text-subtle)]">{{ browserState.tabs.length }}</span>
                   </button>
-                  </div>
                 </div>
-                <span v-if="projectPanelMode === 'logs'" class="flex items-center gap-2 text-[11px] text-white/45">
-                  <span class="h-1.5 w-1.5 rounded-full bg-[var(--live)]" :class="eventStreamConnected ? 'animate-pulse' : 'opacity-40'"></span>
-                  {{ eventStreamConnected ? 'Live' : 'Reconnecting' }} · {{ projectLogEntries.length }} lines
-                </span>
-                <span v-else-if="activeBrowserTab?.detached" class="text-[11px] text-white/45">Detached window</span>
               </div>
-
-              <LogViewer
-                v-if="projectPanelMode === 'logs'"
-                ref="logViewer"
-                :key="selectedGroupKey ?? ''"
-                :entries="projectLogEntries"
-                :services="projectLogServices"
-                @open-url="openLogUrl"
-                @open-file="openLogFile"
-              />
-
-              <BrowserPanel v-else />
+              <span v-if="projectPanelMode === 'logs'" class="flex shrink-0 items-center gap-1.5 text-xs text-[var(--text-subtle)]">
+                <span class="h-1.5 w-1.5 rounded-full bg-[var(--live)]" :class="eventStreamConnected ? '' : 'opacity-40'"></span>
+                {{ eventStreamConnected ? 'Live' : 'Reconnecting' }} · {{ projectLogEntries.length }} lines
+              </span>
+              <span v-else-if="activeBrowserTab?.detached" class="shrink-0 text-xs text-[var(--text-subtle)]">Detached window</span>
             </div>
+
+            <LogViewer
+              v-if="projectPanelMode === 'logs'"
+              ref="logViewer"
+              :key="selectedGroupKey ?? ''"
+              :entries="projectLogEntries"
+              :services="projectLogServices"
+              @open-url="openLogUrl"
+              @open-file="openLogFile"
+            />
+
+            <BrowserPanel v-else />
           </div>
         </div>
       </div>

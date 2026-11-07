@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import ActivityView from './components/ActivityView.vue'
 import AddProjectsDialog from './components/AddProjectsDialog.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -21,9 +22,10 @@ import { useProjectPicker } from './composables/useProjectPicker'
 import { useProjects } from './composables/useProjects'
 import { useServiceActions } from './composables/useServiceActions'
 import { useSettings } from './composables/useSettings'
+import { useUsage } from './composables/useUsage'
 import { ensureApiBase } from './lib/api'
 import { projectRootPath, projectTitle } from './lib/services'
-import { themeStyle } from './theme'
+import { resolveTheme, themeStyle } from './theme'
 import { type ServiceOption } from './types'
 
 // The shell: sidebar, the current page, and the dialogs over it. State and actions live in
@@ -40,11 +42,12 @@ const { activeBrowserTab, syncBrowserBounds, updateBrowserVisibility, connectBro
 const { loadRecentProjects, addFolders } = useProjectPicker()
 const { refreshSelectedInstances, stopActionTimers } = useServiceActions()
 const { paletteCommands, showLogs, handleKeydown } = useCommands()
+const { startUsage, stopUsage } = useUsage()
 
 const sidebarCollapsed = ref(false)
 
 // The Settings page previews the theme being chosen before it is saved.
-const activeTheme = computed(() => activeSection.value === 'settings' ? settingsDraft.theme : settings.theme)
+const activeTheme = computed(() => resolveTheme(activeSection.value === 'settings' ? settingsDraft.theme : settings.theme))
 const shellStyle = computed(() => themeStyle(activeTheme.value))
 
 const serviceOptions = computed<ServiceOption[]>(() => projects.value.map((item) => ({
@@ -152,6 +155,7 @@ onMounted(async () => {
   }, 15000)
   portsTimer = window.setInterval(refreshPortsIfStale, 5000)
   connectEventStream()
+  startUsage()
   await connectBrowser()
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleKeydown)
@@ -167,6 +171,7 @@ onBeforeUnmount(() => {
   window.clearInterval(projectsTimer)
   window.clearInterval(portsTimer)
   disconnectEventStream()
+  stopUsage()
   stopPortsPolling()
   stopActionTimers()
   disconnectBrowser()
@@ -182,21 +187,19 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="multiprise-shell relative h-screen overflow-hidden bg-[var(--app-bg)] font-sans text-[var(--text)]" :style="shellStyle">
-    <div class="app-drag-region pointer-events-none absolute inset-x-0 top-0 z-30 h-9"></div>
+  <div class="multiprise-shell relative h-screen overflow-hidden font-sans text-[var(--text)]" :data-theme="activeTheme" :style="shellStyle">
     <main
-      class="grid h-full min-h-0 overflow-hidden pt-9 transition-[grid-template-columns] duration-200 ease-out"
-      :class="sidebarCollapsed ? 'grid-cols-[48px_1fr]' : 'grid-cols-[260px_1fr]'"
+      class="grid h-full min-h-0 overflow-hidden transition-[grid-template-columns] duration-200 ease-out"
+      :class="sidebarCollapsed ? 'grid-cols-[72px_1fr]' : 'grid-cols-[232px_1fr]'"
     >
       <AppSidebar v-model:collapsed="sidebarCollapsed" :theme="activeTheme" />
 
       <section class="flex h-full min-h-0 flex-col overflow-hidden">
-        <div class="flex-1 min-h-0 overflow-hidden p-3">
-          <div class="h-full min-h-0">
-            <HomeView v-if="activeSection === 'home'" />
-            <ProjectPage v-else-if="activeSection === 'projects'" />
-            <SettingsView v-else />
-          </div>
+        <div class="content-plate min-h-0 flex-1 overflow-hidden">
+          <HomeView v-if="activeSection === 'home'" />
+          <ProjectPage v-else-if="activeSection === 'projects'" />
+          <ActivityView v-else-if="activeSection === 'activity'" />
+          <SettingsView v-else />
         </div>
       </section>
     </main>
@@ -214,7 +217,7 @@ onBeforeUnmount(() => {
       v-if="dragDepth > 0"
       class="pointer-events-none fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-8"
     >
-      <div class="flex h-full w-full flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-[var(--electric)] bg-[color-mix(in_srgb,var(--panel-bg)_85%,transparent)]">
+      <div class="flex h-full w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-[var(--electric)] bg-[color-mix(in_srgb,var(--panel-bg)_85%,transparent)]">
         <svg viewBox="0 0 24 24" class="h-10 w-10 text-[var(--electric)]" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke-linejoin="round" />
           <path d="M12 10v6M9 13h6" stroke-linecap="round" />

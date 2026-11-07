@@ -73,7 +73,7 @@ const { deleteGroup } = useServiceActions()
                         :title="service.start"
                       >
                         <span class="font-medium text-[var(--text)]">{{ service.name }}</span>
-                        <span class="truncate font-mono text-[10px] text-[var(--text-subtle)]">{{ service.start }}</span>
+                        <span class="truncate font-mono text-[11px] text-[var(--text-subtle)]">{{ service.start }}</span>
                       </span>
                     </div>
                     <div v-else-if="projectPreviewMap[folder]?.error" class="text-xs text-[var(--warning-text)]">
@@ -92,7 +92,7 @@ const { deleteGroup } = useServiceActions()
                 <div v-for="group in folderGroups" :key="group.key" class="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-[var(--hover)]">
                   <div class="min-w-0">
                     <p class="truncate text-xs text-[var(--text)]">{{ group.name }}</p>
-                    <p class="truncate text-[10px] text-[var(--text-subtle)]">{{ group.path }}</p>
+                    <p class="truncate text-[11px] text-[var(--text-subtle)]">{{ group.path }}</p>
                   </div>
                   <button class="rounded-md px-2 py-1 text-[11px] text-[var(--text-muted)] hover:bg-[var(--panel-bg)]" @click="deleteGroup(group)">
                     Untrack

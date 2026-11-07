@@ -365,13 +365,13 @@ async function killInstance(service: ProjectView, pid: number) {
   setActionLoading('kill', id, true, pid)
   try {
     const response = await apiFetch(`/api/projects/${id}/process/kill`, jsonBody('POST', { pid }))
-    if (!response.ok) await throwResponseError(response, 'Failed to unplug process')
+    if (!response.ok) await throwResponseError(response, 'Failed to stop process')
     await fetchInstances(service)
     await loadProjects()
     await fetchUsedPorts({ silent: true })
     return true
   } catch (err) {
-    const message = errorMessage(err, 'Unable to unplug process')
+    const message = errorMessage(err, 'Unable to stop process')
     error.value = message
     setActionError(id, message)
     return false

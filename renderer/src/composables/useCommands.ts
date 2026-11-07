@@ -9,6 +9,7 @@ import { useProjectPicker } from './useProjectPicker'
 import { useProjects } from './useProjects'
 import { useServiceActions } from './useServiceActions'
 import { useSettings } from './useSettings'
+import { type ThemeName } from '../types'
 
 // The command palette's commands and the app-wide keyboard shortcuts.
 
@@ -85,14 +86,15 @@ const paletteCommands = computed<PaletteCommand[]>(() => {
     { id: 'logs', group: 'App', title: 'Search logs', shortcut: '⌘F', run: () => showLogs() },
     { id: 'add', group: 'App', title: 'Add projects…', shortcut: '⌘O', run: () => openPicker() },
     { id: 'home', group: 'App', title: 'Go home', run: () => goHome() },
+    { id: 'activity', group: 'App', title: 'Open activity', keywords: 'cpu memory usage performance swap', run: () => { activeSection.value = 'activity' } },
     { id: 'welcome', group: 'App', title: 'Show the welcome tour', keywords: 'onboarding intro help', run: () => { onboardingOpen.value = true } },
     { id: 'settings', group: 'App', title: 'Open settings', shortcut: '⌘,', run: () => { activeSection.value = 'settings' } },
     {
       id: 'theme',
       group: 'App',
-      title: settings.theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme',
-      keywords: 'appearance dark light mode',
-      run: () => patchSetting({ theme: settings.theme === 'dark' ? 'light' : 'dark' })
+      title: `Switch to the ${nextTheme[settings.theme]} theme`,
+      keywords: 'appearance dark light system auto socket orange mode',
+      run: () => patchSetting({ theme: nextTheme[settings.theme] })
     }
   )
   return commands
@@ -149,6 +151,8 @@ function handleKeydown(event: KeyboardEvent) {
     closeManualPortPrompt()
   }
 }
+
+const nextTheme: Record<ThemeName, ThemeName> = { system: 'light', light: 'dark', dark: 'socket', socket: 'system' }
 
 export function useCommands() {
   return { paletteCommands, showLogs, handleKeydown }

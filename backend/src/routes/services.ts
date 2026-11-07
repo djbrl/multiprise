@@ -13,6 +13,8 @@ import { processExists, processWorkingDirectory, terminateExternalProcess } from
 import { launchWithDependencies, stopService } from '../launch'
 import { runPreparationStep } from '../preparation'
 import { handle, isSameOrInside } from '../http'
+import { knownSecrets } from '../environment'
+import { redactText } from '../redact'
 import { type ApiContext } from './context'
 
 function pathBelongsToProject(project: Project, candidate: string) {
@@ -89,15 +91,17 @@ export function registerServiceRoutes(app: Express, { state, launches }: ApiCont
     res.json(await stopService(state, launches, project))
   }))
 
-  app.get('/api/projects/:id/logs', (req: Request, res: Response) => {
+  app.get('/api/projects/:id/logs', handle(async (req: Request, res: Response) => {
     const project = state.projects.find((entry) => entry.id === req.params.id)
     if (!project) {
       return res.status(404).send('Project not found')
     }
     const tail = req.query.tail ? Number(req.query.tail) : undefined
     const data = getLogs(project.id, tail)
-    res.json({ logs: data })
-  })
+    if (!req.query.redact) return res.json({ logs: data })
+    const values = await knownSecrets(project)
+    res.json({ logs: data.map((entry) => ({ ...entry, line: redactText(entry.line, values) })) })
+  }))
 
   app.get('/api/projects/:id/process/instances', handle(async (req: Request, res: Response) => {
     const project = state.projects.find((entry) => entry.id === req.params.id)

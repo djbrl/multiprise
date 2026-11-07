@@ -118,14 +118,14 @@ onMounted(() => input.value?.focus())
           spellcheck="false"
           @keydown="onKeydown"
         />
-        <kbd class="rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--text-subtle)]">esc</kbd>
+        <kbd class="rounded border border-[var(--border)] px-1.5 py-0.5 text-[11px] text-[var(--text-subtle)]">esc</kbd>
       </div>
       <div ref="list" class="min-h-0 flex-1 overflow-y-auto p-2" :class="noScrollbar">
         <p v-if="!results.length" class="px-3 py-6 text-center text-sm text-[var(--text-subtle)]">Nothing matches.</p>
         <template v-for="(command, index) in results" :key="command.id">
           <p
             v-if="showGroups && (index === 0 || results[index - 1].group !== command.group)"
-            class="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-subtle)]"
+            class="px-3 pb-1 pt-2 text-[11px] font-semibold text-[var(--text-subtle)]"
           >{{ command.group }}</p>
           <button
             type="button"
@@ -140,13 +140,13 @@ onMounted(() => input.value?.focus())
               <span v-if="command.subtitle" class="block truncate text-[11px] text-[var(--text-subtle)]">{{ command.subtitle }}</span>
             </span>
             <span class="flex shrink-0 items-center gap-2">
-              <span v-if="!showGroups" class="text-[10px] text-[var(--text-subtle)]">{{ command.group }}</span>
-              <kbd v-if="command.shortcut" class="rounded border border-[var(--border)] px-1.5 py-0.5 font-sans text-[10px] text-[var(--text-subtle)]">{{ command.shortcut }}</kbd>
+              <span v-if="!showGroups" class="text-[11px] text-[var(--text-subtle)]">{{ command.group }}</span>
+              <kbd v-if="command.shortcut" class="rounded border border-[var(--border)] px-1.5 py-0.5 font-sans text-[11px] text-[var(--text-subtle)]">{{ command.shortcut }}</kbd>
             </span>
           </button>
         </template>
       </div>
-      <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-[var(--border)] px-4 py-2 text-[10px] text-[var(--text-subtle)]">
+      <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-[var(--border)] px-4 py-2 text-[11px] text-[var(--text-subtle)]">
         <span>↑↓ to move · ↩ to run</span>
         <span>⌘K palette</span>
         <span>⌘F search logs</span>

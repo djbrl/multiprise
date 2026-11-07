@@ -233,7 +233,7 @@ test('an already-running dev server exposes a recoverable process conflict', () 
     'Another vinext dev server is already running.',
     '- Local: http://127.0.0.1:5808.',
     '- PID: 3102',
-    '- Dir: /Users/dev/DakarDemDikk',
+    '- Dir: /Users/dev/harbor',
     "or run 'kill 3102' to stop it and start a new one."
   ].join('\n')
 
@@ -241,7 +241,7 @@ test('an already-running dev server exposes a recoverable process conflict', () 
     pid: 3102,
     port: 5808,
     url: 'http://127.0.0.1:5808',
-    cwd: '/Users/dev/DakarDemDikk'
+    cwd: '/Users/dev/harbor'
   })
   assert.equal(classifyStartupFailure(output, 'failed', 5295).code, 'existing-instance')
   assert.match(classifyStartupFailure(output, 'failed', 5295).message, /5808.*3102/)
@@ -416,6 +416,16 @@ test('settings updates only persist known keys with valid values', async (contex
   assert.equal(settings.auto_port, true)
   assert.equal(settings.theme, 'light')
   assert.equal('extra' in settings, false)
+})
+
+test('the theme follows the system until one is chosen, and only known themes are kept', async (context) => {
+  const api = await startTestApi()
+  context.after(api.close)
+
+  assert.equal(JSON.parse((await api.call('/api/settings')).body).theme, 'system')
+  assert.equal(JSON.parse((await api.json('PATCH', '/api/settings', { theme: 'socket' })).body).theme, 'socket')
+  assert.equal(JSON.parse((await api.json('PATCH', '/api/settings', { theme: 'neon' })).body).theme, 'socket')
+  assert.equal(JSON.parse((await api.json('PATCH', '/api/settings', { theme: 'system' })).body).theme, 'system')
 })
 
 test('project updates reject invalid ports and names', async (context) => {

@@ -163,7 +163,7 @@ const stateClass = {
               <div v-for="row in detectedRows" :key="row.id" class="grid grid-cols-[minmax(0,14rem)_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2">
                 <div class="min-w-0">
                   <p class="truncate font-mono text-xs text-[var(--text-strong)]" :title="row.key">{{ row.key }}</p>
-                  <p class="text-[10px]" :class="stateClass[rowState(row)]">{{ stateLabel[rowState(row)] }}</p>
+                  <p class="text-[11px]" :class="stateClass[rowState(row)]">{{ stateLabel[rowState(row)] }}</p>
                 </div>
                 <div class="flex min-w-0 items-center gap-1.5">
                   <input

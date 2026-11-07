@@ -1,5 +1,6 @@
 import os from 'node:os'
 import path from 'node:path'
+import { findRepository } from '../repository'
 import { projectRoleFallback } from '../roles'
 import type { LogLine, ProcessPhase, ProjectView, ServiceRole, Settings } from '../types'
 import type { MultipriseClient } from './client'
@@ -37,6 +38,9 @@ export type StartResult = {
   service: Service
   outcome: 'started' | 'already-running' | 'failed' | 'skipped'
   error?: string
+  // When it failed: the kind of failure, and how its output ended.
+  failure_code?: string | null
+  recent_logs?: string[]
 }
 
 export type StopResult = {
@@ -75,7 +79,7 @@ function toService(view: ProjectView, projectName: string, hostUrls: Record<stri
 
 export async function listProjects(client: MultipriseClient): Promise<Project[]> {
   const [{ projects: views }, hostUrls] = await Promise.all([
-    client.request<{ projects: ProjectView[] }>('GET', '/api/projects'),
+    client.request<{ projects: ProjectView[] }>('GET', '/api/projects?redact=1'),
     // Older app versions have no hostname proxy.
     client.request<{ urls: Record<string, string> }>('GET', '/api/hostnames').then((result) => result.urls ?? {}, () => ({}))
   ])
@@ -95,7 +99,7 @@ export async function listProjects(client: MultipriseClient): Promise<Project[]>
 
 const sameName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'accent' }) === 0
 
-const isPathLike = (query: string) => /^(\.{1,2}($|\/)|\/|~($|\/))/.test(query)
+export const isPathLike = (query: string) => /^(\.{1,2}($|\/)|\/|~($|\/))/.test(query)
 
 const expandHome = (value: string) => value === '~' || value.startsWith('~/') ? path.join(os.homedir(), value.slice(1)) : value
 
@@ -103,6 +107,21 @@ const contains = (parent: string, child: string) => child === parent || child.st
 
 export const qualifiedName = (service: Service) =>
   sameName(service.name, service.project) ? service.name : `${service.project}/${service.name}`
+
+// A worktree is its own checkout: a project tracked in the main checkout around it does not
+// hold it, or an agent working there would start the main checkout's services.
+function holder(absolute: string) {
+  const repository = findRepository(absolute)
+  return (folder: string) => contains(folder, absolute) && (!repository?.worktree || contains(repository.root, folder))
+}
+
+// The deepest project holding this folder.
+export function projectHolding(projects: Project[], absolute: string) {
+  const holds = holder(absolute)
+  return projects
+    .filter((project) => holds(project.path))
+    .sort((a, b) => b.path.length - a.path.length)[0] ?? null
+}
 
 function describeMatches(matches: Array<Project | Service>) {
   return matches.map((match) => 'services' in match ? `${match.name} (project)` : qualifiedName(match)).join(', ')
@@ -119,9 +138,7 @@ function byPath(projects: Project[], absolute: string): Target | null {
   const exactService = services.find((service) => service.path === absolute)
   if (exactService) return { project: projectOf(projects, exactService), services: [exactService], whole: false }
   // The deepest project containing the folder, e.g. a subfolder of a service.
-  const containing = projects
-    .filter((project) => contains(project.path, absolute))
-    .sort((a, b) => b.path.length - a.path.length)[0]
+  const containing = projectHolding(projects, absolute)
   return containing ? { project: containing, services: containing.services, whole: true } : null
 }
 
@@ -165,12 +182,9 @@ export function resolveTarget(projects: Project[], query: string, cwd = process.
 
 // Without a name, commands act on the project containing the current folder.
 export function resolveCurrentProject(projects: Project[], cwd = process.cwd()): Target {
-  const absolute = path.resolve(cwd)
-  const project = projects
-    .filter((entry) => contains(entry.path, absolute))
-    .sort((a, b) => b.path.length - a.path.length)[0]
+  const project = projectHolding(projects, path.resolve(cwd))
   if (!project) {
-    throw new UsageError(`No Multiprise project contains ${cwd}. Name a project or service, or add this folder in the app.`)
+    throw new UsageError(`No Multiprise project contains ${cwd}. Name a project or service, or run \`multiprise up\` here to track and start it.`)
   }
   return { project, services: project.services, whole: true }
 }
@@ -184,9 +198,10 @@ export function resolveService(projects: Project[], query: string | undefined, c
     const absolute = path.resolve(cwd)
     // Inside a service folder, that service is meant even when the project has others. A
     // service at the project root contains its siblings too, so it only counts when alone.
+    const holds = holder(absolute)
     const service = projects
       .flatMap((project) => project.services)
-      .filter((entry) => contains(entry.path, absolute))
+      .filter((entry) => holds(entry.path))
       .sort((a, b) => b.path.length - a.path.length)[0]
     const project = service && projectOf(projects, service)
     target = service && (service.path !== project.path || project.services.length === 1)
@@ -198,6 +213,43 @@ export function resolveService(projects: Project[], query: string | undefined, c
 }
 
 const errorMessage = (err: unknown) => err instanceof Error ? err.message : String(err)
+
+const RECENT_LOG_LINES = 15
+
+// Why a start failed, in one result, so nobody has to go and read the logs to find out.
+async function failureResult(client: MultipriseClient, service: Service, error: string): Promise<StartResult> {
+  try {
+    const [{ projects: views }, logs] = await Promise.all([
+      client.request<{ projects: ProjectView[] }>('GET', '/api/projects?redact=1'),
+      getLogs(client, service, RECENT_LOG_LINES)
+    ])
+    const view = views.find((entry) => entry.project.id === service.id)
+    return {
+      service: view ? { ...toService(view, service.project), host_url: service.host_url } : service,
+      outcome: 'failed',
+      error: view?.status.error ?? view?.project.last_error ?? error,
+      failure_code: view?.status.failure_code ?? null,
+      recent_logs: logs.map(formatLogLine)
+    }
+  } catch (err) {
+    return { service, outcome: 'failed', error }
+  }
+}
+
+// A service already running may still be starting for someone else; whoever asks next waits too.
+async function resultOfRunning(client: MultipriseClient, service: Service, settings: Settings): Promise<StartResult> {
+  const deadline = Date.now() + settings.startup_timeout_ms + 5000
+  let current = service
+  while (current.phase === 'starting' && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const { projects: views } = await client.request<{ projects: ProjectView[] }>('GET', '/api/projects?redact=1')
+    const view = views.find((entry) => entry.project.id === service.id)
+    if (!view) break
+    current = { ...toService(view, service.project), host_url: service.host_url }
+  }
+  if (current.phase === 'ready') return { service: current, outcome: 'already-running' }
+  return failureResult(client, current, current.error ?? `${qualifiedName(current)} is ${current.phase}.`)
+}
 
 async function startProjectServices(client: MultipriseClient, settings: Settings, target: Target, onProgress?: (message: string) => void) {
   const { project } = target
@@ -230,7 +282,9 @@ async function startProjectServices(client: MultipriseClient, settings: Settings
     let allStarted = true
     for (const service of services) {
       if (service.running) {
-        results.push({ service, outcome: 'already-running' })
+        const result = await resultOfRunning(client, service, settings)
+        results.push(result)
+        if (result.outcome === 'failed') allStarted = false
         continue
       }
       onProgress?.(`Starting ${qualifiedName(service)}…`)
@@ -243,7 +297,7 @@ async function startProjectServices(client: MultipriseClient, settings: Settings
         results.push({ service: { ...toService(view, project.name), host_url: service.host_url }, outcome: 'started' })
       } catch (err) {
         allStarted = false
-        results.push({ service, outcome: 'failed', error: errorMessage(err) })
+        results.push(await failureResult(client, service, errorMessage(err)))
       }
     }
     return allStarted
@@ -330,7 +384,7 @@ function mergeTargets(targets: Target[]) {
 }
 
 export async function getLogs(client: MultipriseClient, service: Service, lines = 100) {
-  const { logs } = await client.request<{ logs: LogLine[] }>('GET', `/api/projects/${service.id}/logs?tail=${Math.max(1, Math.floor(lines))}`)
+  const { logs } = await client.request<{ logs: LogLine[] }>('GET', `/api/projects/${service.id}/logs?tail=${Math.max(1, Math.floor(lines))}&redact=1`)
   return logs
 }
 

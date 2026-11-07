@@ -171,9 +171,9 @@ function lineTone(entry: LogEntry) {
 
 function rowTone(entry: LogEntry) {
   const kind = levelOf(entry)
-  if (kind === 'errors') return 'border-l-[var(--log-error)] bg-[color-mix(in_srgb,var(--danger-bg)_35%,transparent)]'
-  if (kind === 'warnings') return 'border-l-[var(--log-warning)]'
-  return 'border-l-transparent'
+  if (kind === 'errors') return 'bg-[var(--log-error-bg)]'
+  if (kind === 'warnings') return 'bg-[var(--log-warning-bg)]'
+  return ''
 }
 
 function formatTime(value: string) {
@@ -194,56 +194,56 @@ defineExpose({
 </script>
 
 <template>
-  <div class="mt-3 flex flex-wrap items-center gap-1.5">
+  <div class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--border)] px-3 py-2">
     <input
       ref="searchInput"
       v-model="query"
-      :class="[inputBase, 'h-8 w-full py-1.5 text-xs sm:w-auto sm:flex-1']"
+      :class="[inputBase, 'h-7 !w-auto min-w-[180px] flex-1 py-1 text-xs']"
       placeholder="Search logs (⌘F)"
       @keydown.esc="query = ''"
     />
     <button
-      class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+      class="h-7 rounded-md border px-2.5 text-xs transition-colors"
       :class="chip(!anyFilter, 'border-[var(--text-muted)] bg-[var(--chip-active-bg)] text-[var(--text-strong)]')"
       @click="clearFilters"
     >All</button>
     <button
-      class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+      class="h-7 rounded-md border px-2.5 text-xs transition-colors"
       :class="chip(level === 'errors', 'border-[var(--log-error)] bg-[var(--danger-bg)] text-[var(--log-error)]')"
       @click="level = level === 'errors' ? 'all' : 'errors'"
     >Errors</button>
     <button
-      class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+      class="h-7 rounded-md border px-2.5 text-xs transition-colors"
       :class="chip(level === 'warnings', 'border-[var(--log-warning)] text-[var(--log-warning)]')"
       @click="level = level === 'warnings' ? 'all' : 'warnings'"
     >Warnings</button>
     <button
-      class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+      class="h-7 rounded-md border px-2.5 text-xs transition-colors"
       :class="chip(stderrOnly, 'border-[var(--text-muted)] bg-[var(--chip-active-bg)] text-[var(--text-strong)]')"
       title="Only lines written to stderr"
       @click="stderrOnly = !stderrOnly"
     >stderr</button>
     <button
-      class="h-8 rounded-lg border px-2.5 text-[11px] transition-colors"
+      class="h-7 rounded-md border px-2.5 text-xs transition-colors"
       :class="chip(paused, 'border-[var(--log-warning)] text-[var(--log-warning)]')"
       :title="paused ? 'Resume following new lines' : 'Freeze the view while you read'"
       @click="togglePause"
     >{{ paused ? `Resume${newWhilePaused ? ` · ${newWhilePaused} new` : ''}` : 'Pause' }}</button>
   </div>
-  <div v-if="services.length > 1" class="mt-1.5 flex flex-wrap items-center gap-1.5">
+  <div v-if="services.length > 1" class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--border)] px-3 py-2">
     <button
       v-for="service in services"
       :key="service.id"
-      class="h-7 rounded-lg border px-2.5 text-[11px] font-semibold transition-colors"
+      class="h-7 rounded-md border px-2.5 text-xs font-medium transition-colors"
       :class="hidden.includes(service.id) ? 'border-[var(--border)] text-[var(--text-subtle)] line-through opacity-60' : ['border-[var(--border)]', serviceTone(service.role)]"
       :title="hidden.includes(service.id) ? `Show ${service.name}` : `Hide ${service.name}`"
       @click="toggleService(service.id)"
     >{{ service.name }}</button>
   </div>
-  <div class="relative mt-3 min-h-0 flex-1">
+  <div class="relative min-h-0 flex-1">
     <div
       ref="scroller"
-      class="relative h-full min-h-0 overflow-y-auto rounded-xl bg-[var(--log-bg)] px-2 py-2.5 font-mono text-[11px] leading-[1.55]"
+      class="surface-recess relative h-full min-h-0 overflow-y-auto bg-[var(--log-bg)] py-2 font-mono text-xs leading-[1.6]"
       :class="noScrollbar"
       @scroll="handleScroll"
     >
@@ -257,11 +257,11 @@ defineExpose({
       <div
         v-for="entry in visible"
         :key="entry.seq"
-        class="flex min-w-0 gap-2 border-l-2 px-2 py-0.5"
+        class="flex min-w-0 gap-2.5 px-4 py-px"
         :class="rowTone(entry)"
       >
-        <span class="w-[58px] shrink-0 text-[10px] text-[var(--text-subtle)]">{{ formatTime(entry.timestamp) }}</span>
-        <span class="w-[58px] shrink-0 truncate text-[10px] font-semibold" :class="serviceTone(entry.role)" :title="entry.serviceName">{{ entry.serviceName }}</span>
+        <span class="w-[62px] shrink-0 text-[var(--text-subtle)]">{{ formatTime(entry.timestamp) }}</span>
+        <span class="w-[92px] shrink-0 truncate" :class="serviceTone(entry.role)" :title="entry.serviceName">{{ entry.serviceName }}</span>
         <span class="min-w-0 flex-1 whitespace-pre-wrap break-words" :class="lineTone(entry)"><template v-for="(part, index) in segments(entry.line)" :key="index"><a
           v-if="part.kind === 'url'"
           href="#"
@@ -279,14 +279,14 @@ defineExpose({
         ></a><span v-else v-html="highlight(part.text)"></span></template></span>
         <span
           v-if="entry.repeat && entry.repeat > 1"
-          class="shrink-0 self-start rounded-full bg-[var(--hover)] px-1.5 text-[10px] font-semibold text-[var(--text-muted)]"
+          class="shrink-0 self-start rounded bg-[var(--selection)] px-1.5 text-[11px] text-[var(--text-muted)]"
           :title="`Printed ${entry.repeat} times in a row`"
         >×{{ entry.repeat }}</span>
       </div>
     </div>
     <button
       v-if="!pinnedToBottom && !paused"
-      class="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-[var(--border)] bg-[var(--panel-bg)] px-3 py-1.5 text-[11px] text-[var(--text)] shadow-lg hover:bg-[var(--hover)]"
+      class="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-md border border-[var(--border)] bg-[var(--panel-bg)] px-2.5 py-1 text-xs text-[var(--text)] shadow-lg hover:bg-[var(--hover)]"
       @click="jumpToLatest"
     >Jump to latest</button>
   </div>

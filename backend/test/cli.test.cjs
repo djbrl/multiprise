@@ -191,7 +191,7 @@ test('the MCP server exposes the service tools and answers over stdio', async (c
   assert.deepEqual(tools, [
     'list_services', 'start_service', 'stop_service', 'restart_service', 'tail_logs', 'get_url', 'get_service', 'add_project',
     'remove_project', 'configure_service', 'set_environment', 'set_dependencies', 'list_ports', 'list_processes', 'kill_process',
-    'prepare_service', 'get_settings', 'update_settings'
+    'list_running_servers', 'get_usage', 'stop_running_server', 'prepare_service', 'get_settings', 'update_settings'
   ])
 
   const started = JSON.parse((await call('start_service', { service: path.basename(root) })).content[0].text)

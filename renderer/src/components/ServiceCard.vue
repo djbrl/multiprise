@@ -6,7 +6,7 @@ import { useProjects } from '../composables/useProjects'
 import { useServiceActions } from '../composables/useServiceActions'
 import { projectTitle, serviceFailed, serviceMetaLabels, serviceReady, serviceStatusLabel } from '../lib/services'
 import { type ProjectView } from '../types'
-import { btnPanelIcon, btnPanelSecondary, btnUnplug, inputBase, spinnerClass, statusDot, statusDotFailed, statusDotLive } from '../ui'
+import { btnGhostXs, btnPanelSecondary, btnUnplug, inputBase, spinnerClass, statusDot, statusDotFailed, statusDotLive } from '../ui'
 import ServiceFailure from './ServiceFailure.vue'
 
 // One script service on the project page: a compact row while stopped, its command,
@@ -43,12 +43,12 @@ const environmentSummary = computed(() => {
     <div
       v-if="!service.status.running && !actionDetailsOpen[service.project.id]"
       :key="`summary-${service.project.id}`"
-      class="rounded-xl bg-[var(--panel-muted)] px-3 py-2 transition-colors hover:bg-[var(--hover)]"
+      class="border-b border-[var(--border)] px-4 py-2 transition-colors hover:bg-[var(--hover)]"
     >
     <div class="flex items-center justify-between gap-3">
       <div class="flex min-w-0 items-center gap-2">
         <span :class="statusDot"></span>
-        <p class="truncate text-[13px] font-semibold text-[var(--text-strong)]">
+        <p class="truncate text-[13px] font-medium text-[var(--text-strong)]">
           {{ projectTitle(service) }}
           <span
             v-if="serviceMetaLabels(service).length"
@@ -60,16 +60,16 @@ const environmentSummary = computed(() => {
       </div>
       <div class="flex items-center gap-2">
         <button
-          :class="btnPanelSecondary"
+          :class="btnGhostXs"
           :disabled="isActionLoading('stop', service.project.id)"
           :title="isStarting(service) ? 'Stop starting this service' : undefined"
           @click="startOrCancel(service)"
         >
-          <span v-if="isStarting(service)" :class="spinnerClass" aria-hidden="true"></span>
+          <span v-if="isStarting(service)" :class="[spinnerClass, '!h-3 !w-3']" aria-hidden="true"></span>
           {{ isStarting(service) ? 'Cancel' : 'Start' }}
         </button>
         <button
-          :class="btnPanelIcon"
+          class="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--selection)] hover:text-[var(--text-strong)]"
           title="Show details"
           @click="toggleActionDetails(service)"
         >
@@ -87,7 +87,7 @@ const environmentSummary = computed(() => {
     </div>
     <div
       v-if="startupConflictFor(service)"
-      class="mt-2 rounded-lg border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning-text)]"
+      class="mt-2 rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning-text)]"
     >
       <p>
         Another instance is already running at
@@ -106,8 +106,8 @@ const environmentSummary = computed(() => {
         ></span>
         {{
           isResolvingConflict(service)
-            ? 'Unplugging…'
-            : 'Unplug and retry'
+            ? 'Stopping…'
+            : 'Stop it and retry'
         }}
       </button>
     </div>
@@ -129,19 +129,18 @@ const environmentSummary = computed(() => {
     <div
       v-else
       :key="`details-${service.project.id}`"
-      class="relative overflow-hidden rounded-xl bg-[var(--panel-muted)] p-3"
-      :class="service.status.running ? 'powered-service' : ''"
+      class="relative border-b border-[var(--border)] px-4 py-3"
     >
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <div class="flex items-center gap-2">
           <span :class="[statusDot, serviceReady(service) ? statusDotLive : serviceFailed(service) ? statusDotFailed : '']" :aria-label="serviceStatusLabel(service)"></span>
-          <p class="text-sm font-semibold text-[var(--text-strong)]">{{ projectTitle(service) }}</p>
-          <span class="text-[10px] font-medium" :class="serviceFailed(service) ? 'text-[var(--log-error)]' : 'text-[var(--text-subtle)]'">{{ serviceStatusLabel(service) }}</span>
-          <span v-if="serviceReady(service) && effectivePort(service)" class="font-mono text-[11px] text-[var(--text-subtle)]">
+          <p class="truncate text-[13px] font-medium text-[var(--text-strong)]">{{ projectTitle(service) }}</p>
+          <span class="text-xs" :class="serviceFailed(service) ? 'text-[var(--log-error)]' : serviceReady(service) ? 'text-[var(--live-text)]' : 'text-[var(--text-subtle)]'">{{ serviceStatusLabel(service) }}</span>
+          <span v-if="serviceReady(service) && effectivePort(service)" class="font-mono text-xs text-[var(--text-subtle)]">
             :{{ effectivePort(service) }}
           </span>
-          <span v-if="service.status.running && servicePid(service)" class="font-mono text-[10px] text-[var(--text-subtle)]">
+          <span v-if="service.status.running && servicePid(service)" class="font-mono text-[11px] text-[var(--text-subtle)]">
             PID {{ servicePid(service) }}
           </span>
         </div>
@@ -152,7 +151,7 @@ const environmentSummary = computed(() => {
       <div class="flex items-center gap-2">
         <button
           v-if="!service.status.running"
-          :class="btnPanelIcon"
+          class="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--selection)] hover:text-[var(--text-strong)]"
           title="Hide details"
           @click="toggleActionDetails(service)"
         >
@@ -200,7 +199,7 @@ const environmentSummary = computed(() => {
       </div>
       <div
         v-if="!service.status.running && externalInstancesFor(service).length"
-        class="rounded-lg border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning-text)]"
+        class="rounded-md border border-[var(--warning-border)] bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--warning-text)]"
       >
         <p v-if="startupConflictFor(service)">
           Another instance is already running at
@@ -224,8 +223,8 @@ const environmentSummary = computed(() => {
             ></span>
             {{
               isResolvingConflict(service)
-                ? 'Unplugging…'
-                : 'Unplug and retry'
+                ? 'Stopping…'
+                : 'Stop it and retry'
             }}
           </button>
         </div>
@@ -248,7 +247,7 @@ const environmentSummary = computed(() => {
                   closeExternalMenus();
                 "
               >
-                Unplug external
+                Stop external
               </button>
               <button
                 class="flex w-full items-center rounded-md px-2 py-1.5 text-xs text-[var(--text)] hover:bg-[var(--hover)]"
@@ -263,7 +262,16 @@ const environmentSummary = computed(() => {
           </transition>
         </div>
       </div>
-      <div v-else class="flex justify-end">
+      <div v-else class="flex justify-end gap-2">
+        <button
+          v-if="service.status.running && !isStarting(service)"
+          :class="btnPanelSecondary"
+          :disabled="!!failureActionBusy[service.project.id] || isActionLoading('stop', service.project.id)"
+          @click="runFailureAction(service, 'restart')"
+        >
+          <span v-if="failureActionBusy[service.project.id] === 'restart'" :class="[spinnerClass, '!h-3 !w-3']" aria-hidden="true"></span>
+          Restart
+        </button>
         <button
           :class="service.status.running ? btnUnplug : btnPanelSecondary"
           :disabled="isActionLoading('stop', service.project.id)"
@@ -279,9 +287,9 @@ const environmentSummary = computed(() => {
             isStarting(service)
               ? 'Cancel'
               : isActionLoading('stop', service.project.id)
-              ? 'Unplugging…'
+              ? 'Stopping…'
               : service.status.running
-              ? 'Unplug'
+              ? 'Stop'
               : 'Start'
           }}
         </button>
@@ -302,14 +310,14 @@ const environmentSummary = computed(() => {
     />
     <div
       v-if="serviceReady(service) && effectivePort(service)"
-      class="mt-3 flex items-center justify-between rounded-xl bg-[var(--highlight-bg)] px-2.5 py-2 text-[11px] text-[var(--text-muted)]"
+      class="surface-recess mt-3 flex items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-muted)] py-1 pl-2.5 pr-1 text-xs"
     >
       <span class="truncate">
         <span class="font-mono text-[var(--text)]">http://localhost:{{ effectivePort(service) }}</span>
       </span>
       <div class="flex shrink-0 items-center gap-1">
         <button
-          class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#343434] text-white transition-colors hover:bg-[#252525]"
+          class="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text-strong)]"
           :title="copiedServiceUrlId === service.project.id ? 'Copied' : 'Copy link'"
           :aria-label="copiedServiceUrlId === service.project.id ? 'Link copied' : 'Copy link'"
           @click="copyProjectUrl(service)"
@@ -323,7 +331,7 @@ const environmentSummary = computed(() => {
           </svg>
         </button>
         <button
-          class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#343434] text-white transition-colors hover:bg-[#252525]"
+          class="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--hover)] hover:text-[var(--text-strong)]"
           title="Open in system browser"
           aria-label="Open link in system browser"
           @click="openProjectUrl(service)"
@@ -333,7 +341,7 @@ const environmentSummary = computed(() => {
           </svg>
         </button>
         <button
-          class="inline-flex h-7 items-center justify-center rounded-md bg-[var(--ghost-bg)] px-2 text-[10px] font-medium text-[var(--ghost-text)] transition-colors hover:bg-[var(--ghost-hover)]"
+          :class="btnGhostXs"
           title="Open in Multiprise"
           @click="openInAppBrowser(service)"
         >
@@ -358,11 +366,11 @@ const environmentSummary = computed(() => {
         </span>
         <button
           v-if="instance.source === 'external'"
-          class="rounded px-1.5 py-1 text-[10px] text-[var(--text-muted)] hover:bg-[var(--hover)]"
+          class="rounded px-1.5 py-1 text-xs text-[var(--text-muted)] hover:bg-[var(--hover)]"
           :disabled="isActionLoading('kill', service.project.id, instance.pid)"
           @click="killInstance(service, instance.pid)"
         >
-          Unplug
+          Stop
         </button>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 
@@ -78,25 +79,26 @@ test('first run: add a project, launch it, read its logs and stop it', async () 
     await page.getByRole('button', { name: 'Add 1 project · 1 service' }).click()
     await page.getByRole('button', { name: 'Continue' }).click()
     await page.getByRole('button', { name: 'Open Multiprise' }).click()
-    await expect(page.getByRole('heading', { name: 'All projects · 1' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Projects 1' })).toBeVisible()
     const settings = JSON.parse(await fs.readFile(path.join(workDir, 'data', 'settings.json'), 'utf8'))
     expect(settings.onboarded).toBe(true)
   })
 
-  const allProjects = page.getByRole('heading', { name: /^All projects/ }).locator('..')
+  const allProjects = page.getByRole('heading', { name: /^Projects/ }).locator('..')
+  const serverRow = page.getByRole('region', { name: 'Servers on this Mac' }).locator('div.items-center', { hasText: 'e2e-shop' })
 
   await test.step('launch makes it ready and reachable', async () => {
     await allProjects.getByRole('button', { name: 'Launch' }).click()
     await expect(allProjects.getByText('1 of 1 running')).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Running now · 1' })).toBeVisible()
-    const url = await page.getByRole('button', { name: /^http:\/\/localhost:\d+$/ }).textContent()
-    const response = await fetch(url!.trim())
+    await expect(page.getByRole('heading', { name: /^Running \d+$/ })).toBeVisible()
+    const port = await serverRow.getByRole('button', { name: /^:\d+$/ }).textContent()
+    const response = await fetch(`http://localhost:${port!.trim().slice(1)}`)
     expect(await response.text()).toBe('hello from e2e')
   })
 
   await test.step('the project page shows its logs', async () => {
     await allProjects.getByRole('button', { name: /e2e-shop/ }).click()
-    await expect(page.getByText('1/1 ready')).toBeVisible()
+    await expect(page.getByText('1 of 1 ready')).toBeVisible()
     await expect(page.getByText(/e2e server listening on \d+/)).toBeVisible()
     await page.getByTitle('Home').click()
   })
@@ -104,7 +106,7 @@ test('first run: add a project, launch it, read its logs and stop it', async () 
   await test.step('stop frees it', async () => {
     await allProjects.getByRole('button', { name: 'Stop' }).click()
     await expect(allProjects.getByText('1 service')).toBeVisible()
-    await expect(page.getByRole('heading', { name: /Running now/ })).toHaveCount(0)
+    await expect(serverRow).toHaveCount(0)
   })
 })
 
@@ -115,4 +117,67 @@ test('settings and the command palette open', async () => {
   await page.keyboard.type('e2e-shop')
   await page.keyboard.press('Enter')
   await expect(page.getByText(/e2e server listening on \d+/)).toBeVisible()
+})
+
+// Only ever acts on the server it starts: Home also lists whatever else runs on this machine.
+test('a server started outside the app shows on Home, and can be stopped there', async () => {
+  const folder = path.join(workDir, 'outside-demo')
+  await fs.mkdir(folder)
+  const server = spawn(process.execPath, ['-e', `require('http').createServer((q,r)=>r.end('outside')).listen(0,'127.0.0.1')`], { cwd: folder, stdio: 'ignore' })
+  const exited = new Promise((resolve) => server.once('exit', resolve))
+  try {
+    await expect.poll(async () => {
+      await page.keyboard.press('Meta+,')
+      await page.getByTitle('Home').click()
+      return page.getByRole('region', { name: 'Servers on this Mac' }).getByText('outside-demo').count()
+    }, { timeout: 15_000 }).toBe(1)
+
+    const row = page.getByRole('region', { name: 'Servers on this Mac' }).locator('div.items-center', { hasText: 'outside-demo' })
+    await expect(row.getByText('temporary folder')).toBeVisible()
+    // Something is still attached to it, so stopping takes a second click.
+    await row.getByRole('button', { name: 'Stop' }).click()
+    expect(server.exitCode).toBeNull()
+    await row.getByRole('button', { name: 'Stop it?' }).click()
+    await exited
+    await expect(row).toHaveCount(0)
+  } finally {
+    server.kill('SIGKILL')
+  }
+})
+
+// Only ever acts on the server it starts.
+test('Activity shows the machine and what a server takes, and can stop it', async () => {
+  const folder = path.join(workDir, 'activity-demo')
+  await fs.mkdir(folder)
+  const server = spawn(process.execPath, ['-e', `require('http').createServer((q,r)=>r.end('activity')).listen(0,'127.0.0.1')`], { cwd: folder, stdio: 'ignore' })
+  const exited = new Promise((resolve) => server.once('exit', resolve))
+  try {
+    await page.getByRole('button', { name: /^Activity\./ }).click()
+    await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'CPU' }).getByText(/\d+%$/).first()).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Memory' }).getByText(/\d GB/).first()).toBeVisible()
+
+    const table = page.getByRole('region', { name: 'What is using it' })
+    const row = table.locator('div.grid', { hasText: 'activity-demo' })
+    await expect(row).toHaveCount(1, { timeout: 15_000 })
+    await expect(row.getByText(/\d+ MB/)).toBeVisible()
+    await expect(table.locator('div.grid', { hasText: 'this app' }).getByText(/\d+ MB/)).toBeVisible()
+
+    // The rest of the Mac, apps and macOS itself, with the server not listed twice.
+    const rest = page.getByRole('region', { name: 'Everything else' })
+    await expect(rest.locator('div.grid', { hasText: 'macOS' }).first()).toBeVisible()
+    await expect(rest.locator('div.grid', { hasText: 'activity-demo' })).toHaveCount(0)
+    await rest.getByRole('button', { name: 'CPU' }).click()
+    await expect(rest.getByRole('button', { name: 'CPU' })).toHaveAttribute('aria-pressed', 'true')
+
+    // Something is still attached to it, so stopping takes a second click.
+    await row.hover()
+    await row.getByRole('button', { name: 'Stop' }).click()
+    expect(server.exitCode).toBeNull()
+    await row.getByRole('button', { name: 'Stop it?' }).click()
+    await exited
+    await expect(row).toHaveCount(0)
+  } finally {
+    server.kill('SIGKILL')
+  }
 })

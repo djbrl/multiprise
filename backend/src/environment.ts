@@ -3,6 +3,7 @@ import path from 'node:path'
 import * as electron from 'electron'
 import { activeHostnamePort, hostUrls } from './hostnames'
 import { HttpError } from './http'
+import { SECRET_NAME } from './redact'
 import { type AppState } from './state'
 import { dataDir } from './store'
 import { type DetectedVariable, type EnvFileStatus, type EnvVariable, type Project } from './types'
@@ -150,6 +151,40 @@ export async function serviceEnvironment(state: AppState, project: Project) {
   return env
 }
 
+
+const SECRETS_CACHE_MS = 10000
+const secretsCache = new Map<string, { at: number; values: Promise<string[]> }>()
+
+async function readKnownSecrets(project: Project) {
+  const values: string[] = []
+  for (const key of project.secret_env ?? []) {
+    const value = await secretStore.get(project.id, key).catch(() => null)
+    if (value) values.push(value)
+  }
+  for (const [key, value] of Object.entries(project.env ?? {})) {
+    if (SECRET_NAME.test(key) && !value.includes('{{')) values.push(value)
+  }
+  // Most secrets live in the project's own env files rather than in Multiprise.
+  for (const folder of new Set([project.path, project.root_path ?? project.path])) {
+    for (const name of ENV_FILES) {
+      const text = await fs.readFile(path.join(folder, name), 'utf8').catch(() => null)
+      if (text === null) continue
+      for (const entry of envEntries(text)) {
+        if (SECRET_NAME.test(entry.key) && entry.value) values.push(entry.value)
+      }
+    }
+  }
+  return [...new Set(values)]
+}
+
+// Values to mask in this service's output. Log lines arrive one by one, so briefly cached.
+export function knownSecrets(project: Project) {
+  const cached = secretsCache.get(project.id)
+  if (cached && Date.now() - cached.at < SECRETS_CACHE_MS) return cached.values
+  const values = readKnownSecrets(project)
+  secretsCache.set(project.id, { at: Date.now(), values })
+  return values
+}
 
 const EXAMPLE_FILES = ['.env.example', '.env.sample', '.env.template', '.env.dist']
 const ENV_FILES = ['.env', '.env.local', '.env.development', '.env.development.local']

@@ -5,7 +5,7 @@ const path = require('path');
 
 const INSTALL_DIR = '/usr/local/bin';
 const INSTALL_PATH = path.join(INSTALL_DIR, 'multiprise');
-const MCP_SETUP = 'claude mcp add multiprise -- multiprise mcp';
+const MCP_SETUP = 'multiprise agents connect';
 
 // The wrapper script shipped in the app bundle (see bin/multiprise and extraResources).
 const bundledCliPath = () => path.join(process.resourcesPath, 'bin', 'multiprise');
@@ -84,11 +84,11 @@ async function installCommandLineTool() {
 
   const { response } = await dialog.showMessageBox({
     type: 'info',
-    buttons: ['OK', 'Copy MCP Setup Command'],
+    buttons: ['OK', 'Copy Setup Command'],
     defaultId: 0,
     message: 'The multiprise command is installed.',
     detail: 'Try `multiprise ls` or `multiprise up` in a project folder.\n\n' +
-      `To let coding agents use your services, register the MCP server, e.g. for Claude Code:\n${MCP_SETUP}`
+      `To have Claude Code run dev servers through Multiprise, run:\n${MCP_SETUP}`
   });
   if (response === 1) clipboard.writeText(MCP_SETUP);
 }

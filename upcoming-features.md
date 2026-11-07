@@ -2,6 +2,20 @@
 
 Ordered by priority within each section. Check items off as they land.
 
+## Agent-first
+
+Most servers now get started by terminals and coding agents, which never saw the app. These make it useful to them, in this order.
+
+- [x] **See everything running, with no setup** — every dev server on the Mac on Home and in `multiprise running`, with project, worktree and age; leftovers flagged, stopped in one click.
+- [x] **Default for agents** — one-click Claude Code connection (MCP server plus a `CLAUDE.md` block), `multiprise up` works in any folder and tracks it first, failures come with their logs, secrets are masked in CLI and MCP output.
+- [ ] **Worktrees as first-class** — each with its own ports, env and `branch.project.localhost` URL, its servers stopped and its entry removed when the worktree goes away, plus disk cleanup. Make "where this runs" a property of a service along the way. Server ownership (which session started what) goes here too.
+- [ ] **Errors since the last restart** — one call answers "did my change break anything?"
+- [ ] **Always on** — start at login, live in the menu bar, with the window as the detail view.
+- [ ] **Respect project scripts** — detect `up` scripts and Procfiles, so projects with their own runner lose no services.
+- [ ] **Project tasks with a local queue** — `multiprise run test` with the service's cwd and env, limiting how many heavy tasks run at once. Replaces the Project tasks item below.
+- [ ] **"Fix with Claude"** — a failed service opens a Claude Code session in its folder with the error and logs filled in.
+- [ ] **Remote machines** — run builds and servers on another machine over SSH, behind the same `*.localhost` URLs. Only once the Mac is actually struggling.
+
 ## Now
 
 - [x] **Sticky ports** — reuse a service's previous port when it is still free, so its URL survives relaunches.
@@ -32,7 +46,7 @@ Ordered by priority within each section. Check items off as they land.
 ## Features
 
 - [ ] **Stacks** — named groups of services across repositories, launched together.
-- [ ] **CPU and memory per service** — sampled per process group.
+- [x] **CPU and memory per service** — Activity, `multiprise usage` and the `get_usage` MCP tool.
 - [ ] **Git branch and working-tree status** — on each project, with optional restart on branch switch.
 - [ ] **Project tasks** — one-off test, migrate, seed, build and lint commands with the service's cwd and env.
 - [ ] **Browser viewport presets and tab restoration.**
