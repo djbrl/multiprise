@@ -210,12 +210,12 @@ nav .links a:hover { color: var(--text); }
 .env div.on { opacity: 1; transform: none; }
 .env .k { color: var(--muted); }
 
-/* ---------- logs + preview ---------- */
-#logs { overflow-x: clip; }  /* the preview starts off to the right before sliding in */
-#logs .fvis { height: clamp(360px, 52vw, 640px); }
-#logs .frame { position: absolute; width: 74%; will-change: transform; }
-#logs .frame.a { left: 0; top: 0; }
-#logs .frame.b { right: 0; top: 16%; }
+/* ---------- pairs of screenshots: the second slides over the first ---------- */
+.pair { overflow-x: clip; }  /* the second shot starts off to the right before sliding in */
+.pair .fvis { height: clamp(360px, 52vw, 640px); }
+.pair .frame { position: absolute; width: 74%; will-change: transform; }
+.pair .frame.a { left: 0; top: 0; }
+.pair .frame.b { right: 0; top: 16%; }
 
 /* ---------- command line + MCP (SITE.features.cli) ---------- */
 .term { border-radius: 14px; background: #1c1917; color: #e7e5e4; padding: 26px 30px; font: 14px/2 var(--mono); overflow-x: auto; box-shadow: 0 30px 70px -40px rgba(28,25,23,.5); }
@@ -291,8 +291,8 @@ footer a:hover { color: var(--text); }
   .lane > span { font-size: 13px; }
   .chip { font-size: 12px; padding: 5px 10px; }
   .env { margin: 24px 0 0; font-size: 12px; }
-  #logs .fvis { height: auto; display: grid; gap: 18px; }
-  #logs .frame { position: relative; width: 100%; inset: auto; transform: none !important; opacity: 1 !important; }
+  .pair .fvis { height: auto; display: grid; gap: 18px; }
+  .pair .frame { position: relative; width: 100%; inset: auto; transform: none !important; opacity: 1 !important; }
   .closing { padding: 110px 0 100px; }
   .term { padding: 20px; font-size: 12px; }
   .way .term { padding-right: 20px; padding-top: 52px; }
@@ -317,9 +317,10 @@ footer a:hover { color: var(--text); }
     <div class="links">
       <a href="#ideas">How it works</a>
       <a href="#cli" data-feature="cli">CLI &amp; MCP</a>
+      <a href="#mac">Your Mac</a>
       <a href="#ports">Ports</a>
-      <a href="#privacy">Privacy</a>
       <a href="#get">Get it</a>
+      <a data-link="repo" href="#">GitHub</a>
     </div>
     <a class="btn small" data-download href="#get"><svg viewBox="0 0 814 1000" aria-hidden="true"><path d="M788 341c-6 4-108 62-108 190 0 148 130 200 134 201-1 3-21 71-68 141-43 61-87 122-156 122s-86-40-165-40c-77 0-104 41-167 41s-107-57-158-127C42 787 0 671 0 560c0-178 116-272 230-272 61 0 111 40 149 40 37 0 94-42 163-42 26 0 120 2 182 91zM543 173c29-34 49-81 49-129 0-6 0-13-2-18-47 2-102 31-135 69-26 29-50 76-50 124 0 7 1 14 2 17 3 0 8 1 12 1 42 0 95-28 124-64z"/></svg>Download</a>
   </div>
@@ -357,7 +358,7 @@ footer a:hover { color: var(--text); }
       </div>
       <div class="shot-wrap">
         <div class="shot-glow" aria-hidden="true"></div>
-        <div class="shot" id="heroShot"><img src="img/launch.png" alt="Multiprise running a project: the api and web services are ready on their own ports, with their logs streaming beside them" width="1920" height="1230" data-ph="App screenshot"></div>
+        <div class="shot" id="heroShot"><img src="img/hero.png" alt="Multiprise running a project: the api and web services are ready on their own ports, with the storefront they serve open in the in-app browser beside them" width="1920" height="1229" data-ph="App screenshot"></div>
       </div>
     </div>
   </div>
@@ -373,7 +374,7 @@ footer a:hover { color: var(--text); }
 <!-- 3. Ideas: three beats, one at a time, each visual plays out as you scroll.
      Beat 1 is the atlas demo project from img/add.png: its real manifest lines and what the
      scanner detects from them. Beats 2 and 3 are illustrations built from the real launch
-     (ports from img/launch.png, log lines from img/logs.png). -->
+     (ports from img/hero.png, log lines from img/logs.png). -->
 <section class="scene" id="ideas">
   <div class="stage">
     <div class="wrap ideas">
@@ -427,16 +428,16 @@ footer a:hover { color: var(--text); }
   <div class="wrap">
     <div class="fhead">
       <h2 class="rv">Command line<br>and MCP</h2>
-      <p class="rv d1"><b>Your agents reuse what's already running.</b> The multiprise command and its MCP server let coding agents start services, read their logs and get their URLs instead of starting duplicates on random ports. <span data-when="next">Coming in the next release.</span></p>
+      <p class="rv d1"><b>Your agents reuse what's already running.</b> Everything the app does, from a terminal or an agent: start services, read their logs, get their URLs, instead of starting duplicates on random ports. <span data-when="next">Coming in the next release.</span></p>
     </div>
     <div class="term rv" id="term">
-      <div><span class="p">$</span> multiprise ls          <span class="c"># every project and service, with status and URL</span></div>
-      <div><span class="p">$</span> multiprise up          <span class="c"># start the project containing this folder, backend first</span></div>
+      <div><span class="p">$</span> multiprise up          <span class="c"># start the project in this folder, or this worktree, backend first</span></div>
       <div><span class="p">$</span> multiprise logs web -f <span class="c"># follow a service's output</span></div>
-      <div><span class="p">$</span> open "$(multiprise url web)"</div>
+      <div><span class="p">$</span> multiprise running     <span class="c"># every dev server on this Mac, whoever started it</span></div>
+      <div><span class="p">$</span> multiprise usage       <span class="c"># CPU and memory, per project</span></div>
       <div> </div>
-      <div><span class="p">$</span> claude mcp add multiprise -- multiprise mcp</div>
-      <div><span class="c"># agents get list_services, start_service, stop_service, restart_service, tail_logs and get_url</span></div>
+      <div><span class="p">$</span> multiprise agents connect</div>
+      <div><span class="c"># Claude Code starts servers through Multiprise: start_service, tail_logs, get_url, get_usage…</span></div>
     </div>
   </div>
 </section>
@@ -449,14 +450,14 @@ footer a:hover { color: var(--text); }
       <p class="rv d1"><b>Point it at a folder.</b> Multiprise picks each service's dev script, installs missing dependencies, and starts the backend before the frontend.</p>
     </div>
     <div class="fvis rv">
-      <div class="frame dialog"><img src="img/add.png" alt="Adding a project in Multiprise: three services are detected, two npm scripts and a Cargo worker" width="1427" height="797" data-ph="Add screenshot"></div>
+      <div class="frame dialog"><img src="img/add.png" alt="Adding a project in Multiprise: three services are detected, two npm scripts and a Cargo worker" width="1536" height="902" data-ph="Add screenshot"></div>
     </div>
     <p class="tokens rv">Works with <code>npm</code> <code>pnpm</code> <code>Yarn</code> <code>Bun</code> <code>Cargo</code> <code>Docker Compose</code> and keeps any command you edit.</p>
   </div>
 </section>
 
 <!-- 6. Ports and wiring: the real ranges (port-ranges.json) and the variables from buildStartEnv.
-     The api and web ports are the ones from the real launch in img/launch.png; the ports held
+     The api and web ports are the ones from the real launch in img/hero.png; the ports held
      by other apps are examples. -->
 <section class="scene" id="ports">
   <div class="stage">
@@ -481,20 +482,35 @@ footer a:hover { color: var(--text); }
 </section>
 
 <!-- 7. Logs and preview: two real screenshots; the preview slides over the logs as you scroll. -->
-<section class="feature" id="logs">
+<section class="feature pair" id="logs">
   <div class="wrap">
     <div class="fhead">
       <h2 class="rv">Logs<br>and preview</h2>
       <p class="rv d1"><b>See what every service is doing.</b> Search and filter all of their output in one stream, and open any frontend in a tab right beside it.</p>
     </div>
     <div class="fvis">
-      <div class="frame a" id="logsA"><img src="img/logs.png" alt="Logs from the api and web services in one stream, with warnings highlighted" width="1920" height="1230" data-ph="Logs screenshot"></div>
-      <div class="frame b" id="logsB"><img src="img/browser.png" alt="The running storefront open in Multiprise's in-app browser" width="1920" height="1230" data-ph="Preview screenshot"></div>
+      <div class="frame a" id="logsA"><img src="img/logs.png" alt="The project's logs searched for &quot;stock&quot;, with matches and warnings highlighted" width="1920" height="1229" data-ph="Logs screenshot"></div>
+      <div class="frame b" id="logsB"><img src="img/browser.png" alt="The running storefront open in Multiprise's in-app browser" width="1920" height="1229" data-ph="Preview screenshot"></div>
     </div>
   </div>
 </section>
 
-<!-- 8. Privacy: four statements, one after another. -->
+<!-- 8. Your Mac: every dev server, whoever started it, and what it costs. Real captures of the
+     demo profile; the servers Multiprise did not start and the machine figures are illustrations. -->
+<section class="feature pair" id="mac">
+  <div class="wrap">
+    <div class="fhead">
+      <h2 class="rv">Everything<br>on your Mac</h2>
+      <p class="rv d1"><b>See every dev server, whoever started it.</b> Yours, a terminal's, or an agent's in a worktree, with the ones left behind marked. Then see what each project costs in CPU and memory, and what else is using your Mac.</p>
+    </div>
+    <div class="fvis">
+      <div class="frame a" id="macA"><img src="img/running.png" alt="Home in Multiprise: every dev server on the Mac with its port, command and who started it, and one left behind by a closed terminal" width="1920" height="1229" data-ph="Running screenshot"></div>
+      <div class="frame b" id="macB"><img src="img/activity.png" alt="Activity in Multiprise: the Mac's CPU and memory over the last minutes, and what each dev server takes" width="1920" height="1229" data-ph="Activity screenshot"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 9. Privacy: five statements, one after another. -->
 <section class="feature" id="privacy">
   <div class="wrap">
     <div class="fhead">
@@ -506,16 +522,17 @@ footer a:hover { color: var(--text); }
       <p class="rv"><b>No account.</b> Download it and open it.</p>
       <p class="rv"><b>No telemetry.</b> It never phones home.</p>
       <p class="rv"><b>Sandboxed tabs.</b> Previews can't reach the app's controls.</p>
+      <p class="rv"><b>Open source.</b> Read every line it runs.</p>
     </div>
   </div>
 </section>
 
-<!-- 9. Get it early: open source, before its first full release. -->
+<!-- 10. Get it early: open source, before its first full release. -->
 <section class="feature" id="get">
   <div class="wrap">
     <div class="fhead">
       <h2 class="rv">Open source.<br>Get it early.</h2>
-      <p class="rv d1"><b>Multiprise isn't fully released yet.</b> Grab the early build for your Mac, or run it straight from the source.</p>
+      <p class="rv d1"><b>MIT licensed, built in the open.</b> Grab the early build for your Mac, or run it from the source. Issues and pull requests are welcome.</p>
     </div>
     <div class="get rv">
       <div class="seg" role="tablist" aria-label="Ways to get Multiprise">
@@ -539,7 +556,7 @@ footer a:hover { color: var(--text); }
   </div>
 </section>
 
-<!-- 10. Closing -->
+<!-- 11. Closing -->
 <section class="closing">
   <div class="wrap">
     <h2 class="rv">Plug in.<br><span>Start building.</span></h2>
@@ -566,16 +583,16 @@ footer a:hover { color: var(--text); }
    features: false = that section stays hidden until it ships.
    ============================================================ */
 const SITE = {
-  version: "0.1.0",
+  version: "0.2.0",
   requirements: "Apple Silicon · macOS 12 or later",
   links: {
     download: "https://github.com/Djbrl/multiprise/releases/latest",  // GitHub for now; a direct .dmg URL also works
     repo: "https://github.com/Djbrl/multiprise",
   },
   features: {
-    // the multiprise CLI + MCP server (on the app-improvements branch, not released yet):
-    // false = hidden, "next" = shown as coming in the next release, true = shown as available
-    cli: "next",
+    // the multiprise CLI + MCP server: false = hidden, "next" = shown as coming in the next
+    // release, true = shown as available
+    cli: true,
   },
   license: "MIT",
   // the band under the header: "soon" = Windows build coming, with the waitlist; null = no band
@@ -707,7 +724,7 @@ const takenVite = $('#railFe .taken[data-port="5173"]');  // Vite's default: usu
 const hero = $("#hero"), shot = $("#heroShot");
 const ideas = $("#ideas"), ideaEls = [...document.querySelectorAll(".idea")], vizEls = [...document.querySelectorAll(".viz")], railEls = [...document.querySelectorAll(".rail b")];
 const ports = $("#ports"), envEls = [...document.querySelectorAll("#env div")];
-const logs = $("#logs"), logsA = $("#logsA"), logsB = $("#logsB");
+const pairs = [[$("#logs"), $("#logsA"), $("#logsB")], [$("#mac"), $("#macA"), $("#macB")]];
 const desktop = matchMedia("(min-width: 901px)");
 
 function heroFrame() {
@@ -764,16 +781,16 @@ function portsFrame() {
   envEls.forEach((el, i) => el.classList.toggle("on", p > .8 + i * .05));
 }
 
-function logsFrame() {
-  if (!desktop.matches) { logsA.style.transform = logsB.style.transform = logsB.style.opacity = ""; return; }
-  const q = ease(win(progress(logs, true), .15, .65));
-  logsA.style.transform = `translateX(${(1 - q) * 4}%)`;
-  logsB.style.transform = `translateX(${(1 - q) * 22}%)`;
-  logsB.style.opacity = .35 + q * .65;
+function pairFrame([section, a, b]) {
+  if (!desktop.matches) { a.style.transform = b.style.transform = b.style.opacity = ""; return; }
+  const q = ease(win(progress(section, true), .15, .65));
+  a.style.transform = `translateX(${(1 - q) * 4}%)`;
+  b.style.transform = `translateX(${(1 - q) * 22}%)`;
+  b.style.opacity = .35 + q * .65;
 }
 
 let queued = false;
-function frame() { queued = false; heroFrame(); ideasFrame(); portsFrame(); logsFrame(); }
+function frame() { queued = false; heroFrame(); ideasFrame(); portsFrame(); pairs.forEach(pairFrame); }
 const request = () => { if (!queued) { queued = true; requestAnimationFrame(frame); } };
 addEventListener("scroll", request, { passive: true });
 addEventListener("resize", request);

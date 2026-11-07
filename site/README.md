@@ -3,7 +3,7 @@
 One static file, `index.html`. No build step. Preview with `python3 -m http.server 4321 -d site`.
 
 **To update, edit only the `SITE` object at the top of the `<script>` in `index.html`:**
-- `links.download`: the public DMG URL. While it is `null`, every Download button is greyed out and the page says "Download available soon". Only set it once the URL works for a logged-out visitor (the GitHub repo and release are private today).
+- `links.download`: the public DMG URL. While it is `null`, every Download button is greyed out and the page says "Download available soon". Only set it to a URL that works for a logged-out visitor.
 - `links.repo`: the public GitHub repo. The GitHub links stay hidden while it is `null`.
 - `version`, `requirements`, `license`: shown under the closing Download button and in the footer.
 
@@ -11,7 +11,7 @@ One static file, `index.html`. No build step. Preview with `python3 -m http.serv
 
 **Brand files** (`icon.svg`, `lockup.svg`, `apple-touch-icon.png`, `og.png`) are generated copies of `brand/`: edit the sources there and run `npm run generate:icons`, never the copies here.
 
-**Screenshots** in `img/` are real captures of the running app in its light theme (demo projects in a scratch profile), 1920 px wide; `add.png` is the same kind of capture cropped to the Add Projects dialog. Missing files show a placeholder frame. The figures and the ruler's example ports are illustrations; the wiring card uses the ports from the real launch in `img/launch.png` (api :5064, web :5309), so update both together if you recapture.
+**Screenshots** in `img/` are real captures of the running app in its dark theme, 1920 px wide, taken with demo projects (northwind, ledger-rs, pulse-blog, atlas) in a scratch profile; `add.png` is cropped to the Add Projects dialog. In `running.png` and `activity.png` the servers Multiprise did not start and the machine's figures are illustrations, so no real machine shows. Missing files show a placeholder frame. The figures and the ruler's example ports are illustrations; the wiring card uses the ports from the real launch in `img/hero.png` (api :5064, web :5309), so update both together if you recapture.
 
 **Live:** https://multiprise.vercel.app (Vercel project `bountbi/multiprise`).
 
