@@ -16,6 +16,7 @@
     "multiprise": "backend/dist/cli/index.js"
   },
   "scripts": {
+    "postinstall": "install-electron",
     "dev": "node scripts/dev.mjs",
     "generate:icons": "electron scripts/generate-icons.cjs",
     "dev:api": "tsx backend/src/dev.ts",
