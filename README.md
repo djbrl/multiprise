@@ -7,7 +7,7 @@ Multiprise is a macOS desktop control center for developers who run several loca
 
 The name comes from the French word for a power strip: one place where many projects can be plugged in, observed, and unplugged.
 
-> Current release: `v0.1.0` for Apple Silicon macOS. The build is not yet signed or notarized, so the first launch needs one extra approval step (see below).
+> Current release: `v0.2.0` for Apple Silicon macOS. The build is not yet signed or notarized, so the first launch needs one extra approval step (see below).
 
 ## Install
 
@@ -260,7 +260,7 @@ The first packaged smoke test caught an important ordering bug: the backend modu
 
 ### 10. Publish the first release
 
-The source was cleaned of local state, generated builds, environment files, and retired prototype code before publication. `electron-builder` produces an Apple Silicon application bundle, DMG installer, and ZIP archive. Version `v0.1.0` is the first public release; signing, notarization, and wider platform support are still pending.
+The source was cleaned of local state, generated builds, environment files, and retired prototype code before publication. `electron-builder` produces an Apple Silicon application bundle, DMG installer, and ZIP archive. Version `v0.1.0` was the first release and `v0.2.0` the first with the source public; signing, notarization, and wider platform support are still pending.
 
 ## Architecture
 
