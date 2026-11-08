@@ -4,7 +4,6 @@ renderer/dist/
 backend/dist/
 backend/data/*.json
 !backend/data/.gitkeep
-legacy/
 .env
 .env.*
 !.env.example
