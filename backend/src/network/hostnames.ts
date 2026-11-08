@@ -10,7 +10,6 @@ import { type Project } from '../types'
 // http://web.shop.localhost:7331, whatever port it currently holds. Browsers and most
 // tools resolve *.localhost to the loopback addresses without any DNS setup.
 
-export const DEFAULT_PROXY_PORT = 7331
 const LISTEN_HOSTS = ['127.0.0.1', '::1']
 
 const slug = (value: string) =>

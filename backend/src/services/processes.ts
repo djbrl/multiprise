@@ -182,10 +182,6 @@ export function getProcessPid(id: string): number | null {
   return processes.get(id)?.child.pid ?? null
 }
 
-export function isProcessRunning(id: string): boolean {
-  return processes.has(id)
-}
-
 function canConnect(host: string, port: number) {
   return new Promise<boolean>((resolve) => {
     const socket = createConnection({ host, port })

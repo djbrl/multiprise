@@ -5,7 +5,7 @@ import { btnPanelIcon, btnPanelSecondary, inputBase, noScrollbar, spinnerClass }
 // The in-app browser's tabs, toolbar, and the placeholder its native page view covers.
 
 const {
-  browserState, browserAddress, browserAddressEditing, browserViewport, activeBrowserTab,
+  browserState, browserAddress, browserAddressEditing, activeBrowserTab,
   browserAction, activateBrowserTab, closeBrowserTab, navigateBrowser, toggleBrowserAttachment
 } = useBrowserTabs()
 </script>

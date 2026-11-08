@@ -2,20 +2,12 @@
 // surface for the Socket theme's materials in style.css.
 export const panelClass = 'surface-raised rounded-lg border border-[var(--border)] bg-[var(--panel-bg)]'
 export const panelProjectClass = 'bg-[var(--panel-project)]'
-export const btnBase =
+const btnBase =
   'inline-flex items-center gap-1.5 rounded-md font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40'
-export const btnSm = 'h-8 px-3 text-[13px]'
-export const btnXs = 'h-7 px-2.5 text-xs'
-export const btnSmText = 'h-8 px-3 text-[13px]'
+const btnXs = 'h-7 px-2.5 text-xs'
 const primaryColors = 'btn-primary bg-[var(--primary)] text-[var(--primary-text)] hover:bg-[var(--primary-hover)]'
 const secondaryColors = 'btn-secondary border border-[var(--ghost-border)] bg-[var(--ghost-bg)] text-[var(--ghost-text)] hover:bg-[var(--ghost-hover)]'
-export const btnGhost = `${btnBase} ${btnSm} ${secondaryColors}`
 export const btnGhostXs = `${btnBase} ${btnXs} ${secondaryColors}`
-export const btnPrimary = `${btnBase} ${btnSm} ${primaryColors}`
-export const btnPrimaryXs = `${btnBase} ${btnXs} ${primaryColors}`
-export const btnPrimarySm = `${btnBase} ${btnSmText} ${primaryColors}`
-export const btnDangerSm = `${btnBase} ${btnSmText} bg-[var(--danger-bg)] text-[var(--danger-text)] hover:bg-[var(--danger-hover)]`
-export const btnBlueXs = `${btnBase} ${btnXs} ${primaryColors}`
 export const btnPanelPrimary = `${btnBase} h-8 px-3 text-[13px] ${primaryColors}`
 export const btnPanelPrimaryLg = `${btnBase} h-8 justify-center px-3 text-[13px] ${primaryColors}`
 export const btnPanelSecondary = `${btnBase} h-8 px-3 text-[13px] ${secondaryColors}`
@@ -27,10 +19,6 @@ export const btnConfirm =
 export const btnPanelTertiary =
   `${btnBase} h-8 px-3 text-[13px] bg-transparent text-[var(--text-muted)] hover:bg-[var(--hover)]`
 export const btnPanelIcon = `${btnBase} h-8 w-8 justify-center p-0 ${secondaryColors}`
-export const chipBase =
-  'inline-flex items-center rounded-md border border-[var(--chip-border)] bg-[var(--chip-bg)] px-2 py-0.5 text-xs font-medium text-[var(--chip-text)]'
-export const chipActive =
-  'border border-[var(--text-strong)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)]'
 export const statusDot = 'inline-flex h-2 w-2 shrink-0 rounded-full border border-[var(--status-border)] bg-[var(--status-bg)]'
 // "!" so these win over statusDot's idle colours regardless of generated CSS order.
 export const statusDotLive = 'status-live !border-[var(--live)] !bg-[var(--live)]'
@@ -41,8 +29,5 @@ export const noScrollbar =
   '[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'
 export const spinnerClass =
   'inline-flex h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--spinner)] border-t-transparent'
-export const toggleBase = 'relative inline-flex h-4 w-7 items-center'
-export const toggleTrack =
-  'h-4 w-7 rounded-full border border-[var(--toggle-border)] bg-[var(--toggle-bg)] transition peer-checked:bg-[var(--toggle-active)]'
 export const toggleThumb =
   'pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-[var(--toggle-thumb)] transition-transform peer-checked:translate-x-3'

@@ -6,7 +6,7 @@ import { HttpError } from '../api/http'
 import { SECRET_NAME } from '../redact'
 import { type AppState } from '../state'
 import { dataDir } from '../store'
-import { type DetectedVariable, type EnvFileStatus, type EnvVariable, type Project } from '../types'
+import { type EnvFileStatus, type EnvVariable, type Project } from '../types'
 
 // Per-service environment: plain variables live in projects.json, secret ones are kept
 // encrypted in secrets.json, and values can point at other services with templates.

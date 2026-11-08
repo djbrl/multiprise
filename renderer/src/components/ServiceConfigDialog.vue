@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { apiFetch } from '../lib/api'
-import { type DetectedVariable, type EnvFileStatus, type EnvironmentResponse, type EnvVariable, type ServiceOption } from '../types'
+import { type DetectedVariable, type EnvFileStatus, type EnvironmentResponse, type ServiceOption } from '../types'
 import { btnPanelIcon, btnPanelPrimary, btnPanelSecondary, inputBase, noScrollbar } from '../ui'
 
 // Edits the variables one service starts with, and which of its project's services start first.
