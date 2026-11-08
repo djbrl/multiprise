@@ -8,7 +8,7 @@ const test = require('node:test')
 process.env.MULTIPRISE_DATA_DIR = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'multiprise-env-data-'))
 
 const { startServer, stopServer } = require('../dist/index.js')
-const { setSecretStore } = require('../dist/environment.js')
+const { setSecretStore } = require('../dist/services/environment.js')
 
 // Outside Electron there is no Keychain-backed storage, so secrets live in memory here.
 const stored = new Map()

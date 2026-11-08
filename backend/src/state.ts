@@ -2,7 +2,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { publish } from './events'
-import { detectProject, discoverProjectServices } from './scanner'
+import { detectProject, discoverProjectServices } from './projects/scanner'
 import { loadProjects, loadSettings, saveProjects, saveSettings } from './store'
 import { type Project, type Settings, type ScanState } from './types'
 

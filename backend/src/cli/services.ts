@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
-import { findRepository } from '../repository'
-import { projectRoleFallback } from '../roles'
+import { findRepository } from '../projects/repository'
+import { projectRoleFallback } from '../projects/roles'
 import type { LogLine, ProcessPhase, ProjectView, ServiceRole, Settings } from '../types'
 import type { MultipriseClient } from './client'
 

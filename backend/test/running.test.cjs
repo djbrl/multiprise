@@ -9,9 +9,9 @@ const test = require('node:test')
 process.env.MULTIPRISE_DATA_DIR = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'multiprise-running-data-'))
 
 const { startServer, stopServer } = require('../dist/index.js')
-const { findRepository, isWorktreeRoot } = require('../dist/repository.js')
+const { findRepository, isWorktreeRoot } = require('../dist/projects/repository.js')
 const { redactText } = require('../dist/redact.js')
-const { withInstructionBlock, withoutInstructionBlock, hasInstructionBlock } = require('../dist/agents.js')
+const { withInstructionBlock, withoutInstructionBlock, hasInstructionBlock } = require('../dist/system/agents.js')
 const { chooseRunningServers } = require('../dist/cli/operations.js')
 const {
   isDesktopApp,
@@ -20,7 +20,7 @@ const {
   parseDockerPs,
   parseProcessList,
   shortCommand
-} = require('../dist/running.js')
+} = require('../dist/system/running.js')
 
 const CLI = path.join(__dirname, '..', 'dist', 'cli', 'index.js')
 

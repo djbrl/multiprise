@@ -174,13 +174,13 @@ When a selected parent folder contains runnable child services, Multiprise ignor
 
 Port configuration stays portable through small framework adapters. Multiprise injects conventional variables such as `PORT`, `BACKEND_PORT`, `FRONTEND_PORT`, `API_PORT`, and frontend API values. Vite additionally receives an explicit `--port <port> --host 127.0.0.1` argument, while Nuxt and supported Cargo frameworks receive their conventional port variables.
 
-See [`PROJECT_DISCOVERY.md`](./PROJECT_DISCOVERY.md) for the complete discovery rules.
+See [`docs/project-discovery.md`](./docs/project-discovery.md) for the complete discovery rules.
 
 ### 4. Build collision-free port assignment
 
 When automatic assignment is enabled, Multiprise scans the relevant range, rejects ports already owned by another listener, reserves an available port, and injects it into the service environment.
 
-The current defaults live in [`port-ranges.json`](./port-ranges.json):
+The current defaults live in [`backend/port-ranges.json`](./backend/port-ranges.json):
 
 - frontend: `3000-4999` and `5100-5999`;
 - backend: `5000-5099` and `8000-8999`.
@@ -279,7 +279,7 @@ flowchart LR
     Main --> Native["Dialogs, Finder, VS Code, system browser"]
 ```
 
-The renderer never receives unrestricted Node.js access. Privileged operations cross the narrow bridge in [`preload.cjs`](./preload.cjs), while Electron lifecycle and native integration live in [`main.cjs`](./main.cjs). The renderer talks to the orchestrator over loopback HTTP using a random token generated at every launch; only the main window can obtain it through the bridge.
+The renderer never receives unrestricted Node.js access. Privileged operations cross the narrow bridge in [`electron/preload.cjs`](./electron/preload.cjs), while Electron lifecycle and native integration live in [`electron/main.cjs`](./electron/main.cjs). The renderer talks to the orchestrator over loopback HTTP using a random token generated at every launch; only the main window can obtain it through the bridge.
 
 ## Launch Flow
 
@@ -305,34 +305,35 @@ Once a service is ready, Multiprise keeps watching it:
 
 ```text
 multiprise/
-├── backend/
+├── electron/                    # Electron main process
+│   ├── main.cjs                 # App lifecycle, windows, in-app browser, IPC
+│   ├── preload.cjs              # Context-isolated renderer bridge
+│   ├── menu-bar.cjs             # Menu bar icon and service notifications
+│   ├── splash.cjs               # Loading window while the backend starts
+│   ├── cli-install.cjs          # "Install Command Line Tool…" (links bin/multiprise)
+│   └── shell-path.cjs           # Loads the login shell's PATH for apps opened from Finder
+├── backend/                     # Orchestrator: API, launches, ports, logs; also the CLI
 │   ├── src/
 │   │   ├── index.ts             # Server startup, API token, and shutdown
-│   │   ├── server.ts            # Express app assembly
-│   │   ├── routes/              # API routes by area (projects, services, ports, …)
-│   │   ├── launch.ts            # Starting and stopping a service
-│   │   ├── guard.ts             # API token, origin, and host checks
 │   │   ├── state.ts             # In-memory state and startup reconciliation
-│   │   ├── scanner.ts           # Project and runtime discovery
-│   │   ├── runtime.ts           # Node version resolution (.nvmrc, engines, fnm)
-│   │   ├── processes.ts         # Starting/ready/failed lifecycle and logs
-│   │   ├── supervisor.ts        # Health checks and crash restarts
-│   │   ├── docker.ts            # Docker Compose status and log streaming
-│   │   ├── hostnames.ts         # *.localhost reverse proxy
-│   │   ├── environment.ts       # Service variables, secrets, templates, .env checks
-│   │   ├── events.ts            # Status, log, and project change events
-│   │   ├── logfiles.ts          # Per-run service log files on disk
-│   │   ├── preparation.ts       # Dependency install and missing-build preparation
-│   │   ├── failures.ts          # Actionable startup error classification
-│   │   ├── ports.ts             # Port inspection and allocation
 │   │   ├── store.ts             # Persistent project/settings storage
+│   │   ├── events.ts            # Status, log, and project change events
 │   │   ├── types.ts             # API types, shared with the CLI and the renderer
-│   │   ├── discovery.ts         # Advertises the running API to the CLI (api.json)
-│   │   ├── cli/                 # `multiprise` CLI and MCP server
+│   │   ├── redact.ts            # Masks secrets in output sent to the CLI and agents
+│   │   ├── api/                 # Express app, API guard, api.json discovery, routes/ by area
+│   │   ├── projects/            # Manifest scanning, service roles, icons, git repositories
+│   │   ├── services/            # Launch, preparation, processes, supervision, failures,
+│   │   │                        #   environment, Node runtimes, log files, Docker Compose
+│   │   ├── network/             # Port allocation and the *.localhost proxy
+│   │   ├── system/              # Servers running on the Mac, CPU/memory, agents, shell commands
+│   │   └── cli/                 # `multiprise` CLI and MCP server
+│   ├── test/                    # Fixture-driven reliability regressions (node:test)
+│   ├── port-ranges.json         # Automatic allocation ranges
 │   └── tsconfig.json
-├── renderer/
+├── renderer/                    # Vue interface
 │   ├── src/App.vue              # Shell: sidebar, current page, dialogs, window events
-│   ├── src/components/          # Pages (home, project, settings), service cards, dialogs, palette, log viewer
+│   ├── src/views/               # Pages: home, project, activity, settings, onboarding
+│   ├── src/components/          # Service cards, dialogs, palette, log viewer, browser, charts
 │   ├── src/composables/         # Shared state and actions (projects, services, logs, ports, browser tabs, …)
 │   ├── src/lib/                 # API client, service helpers, browser storage
 │   ├── src/types.ts             # Re-exports the backend's API types, plus interface-only ones
@@ -341,18 +342,14 @@ multiprise/
 │   ├── src/style.css            # Tailwind layers, transitions, and shell styles
 │   ├── tsconfig.json            # vue-tsc checks the renderer against the backend types
 │   └── vite.config.js
-├── backend/test/                # Fixture-driven reliability regressions
-├── e2e/                         # Playwright tests driving the Electron app
-├── brand/                       # Logo and icon sources; see brand/README.md
-├── .github/workflows/ci.yml     # Build and reliability checks
-├── scripts/dev.mjs              # Portable development launcher
-├── main.cjs                     # Electron main process
-├── menu-bar.cjs                 # Menu bar icon and service notifications
-├── cli-install.cjs              # "Install Command Line Tool…" (links bin/multiprise)
 ├── bin/multiprise               # CLI launcher shipped inside the app bundle
-├── preload.cjs                  # Context-isolated renderer bridge
-├── port-ranges.json             # Automatic allocation ranges
-├── PROJECT_DISCOVERY.md         # Manifest discovery rules
+├── e2e/                         # Playwright tests driving the Electron app
+├── docs/                        # Project discovery rules and the roadmap
+├── brand/                       # Logo and icon sources; see brand/README.md
+├── build/                       # App icons used by electron-builder (generated from brand/)
+├── scripts/                     # Development launcher, icon generation, build helpers
+├── site/                        # Landing page and waitlist; see site/README.md
+├── .github/workflows/ci.yml     # Typecheck, backend and end-to-end tests
 └── package.json                 # Development, build, and package scripts
 ```
 
@@ -473,7 +470,7 @@ Artifacts are written to `release/`. The current package target is Apple Silicon
 
 ## Roadmap
 
-Future work is tracked in [`upcoming-features.md`](./upcoming-features.md). Likely next steps include signed releases, additional operating systems, richer runtime support, and deeper browser/session controls.
+Future work is tracked in [`docs/roadmap.md`](./docs/roadmap.md). Likely next steps include signed releases, additional operating systems, richer runtime support, and deeper browser/session controls.
 
 ## Contributing
 

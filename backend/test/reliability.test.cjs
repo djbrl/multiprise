@@ -8,11 +8,11 @@ const test = require('node:test')
 // Never let tests touch the developer's real backend/data directory.
 process.env.MULTIPRISE_DATA_DIR = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'multiprise-test-data-'))
 
-const scanner = require('../dist/scanner.js')
-const processes = require('../dist/processes.js')
-const runtime = require('../dist/runtime.js')
-const { prepareService } = require('../dist/preparation.js')
-const { classifyStartupFailure, detectStartupConflict } = require('../dist/failures.js')
+const scanner = require('../dist/projects/scanner.js')
+const processes = require('../dist/services/processes.js')
+const runtime = require('../dist/services/runtime.js')
+const { prepareService } = require('../dist/services/preparation.js')
+const { classifyStartupFailure, detectStartupConflict } = require('../dist/services/failures.js')
 
 async function temporaryDirectory(prefix) {
   return fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-`))
@@ -308,7 +308,7 @@ test('startup reconciliation replaces removed nested services with the current r
 test('an edited command wins while auto commands continue following detection', async () => {
   const root = await temporaryDirectory('multiprise-command-owner')
   await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { dev: 'vite', start: 'node dist/main.js' } }))
-  const { resolveStartCommand } = require('../dist/launch.js')
+  const { resolveStartCommand } = require('../dist/services/launch.js')
   const base = {
     id: 'command-owner', name: 'command-owner', path: root, root_path: root, tags: [], command: 'npm run dev',
     command_source: 'auto', framework: 'vite', kind: 'command', role: 'frontend', created_at: new Date().toISOString()
@@ -340,7 +340,7 @@ test('generated deployment output is never discovered as another service', async
 
 async function startTestApi(options = {}) {
   const http = require('node:http')
-  const { createApp } = require('../dist/server.js')
+  const { createApp } = require('../dist/api/server.js')
   const { sanitizeSettings } = require('../dist/store.js')
   const state = { projects: [], settings: sanitizeSettings({}), scans: new Map() }
   const app = await createApp(state, { token: 'test-token', allowedOrigins: ['null'], ...options })
@@ -565,7 +565,7 @@ test('simultaneous starts launch the service once and keep its port consistent',
   const view = JSON.parse((await api.call('/api/projects')).body).projects[0]
   assert.equal(view.status.phase, 'ready')
   assert.equal(view.project.last_error, null)
-  const { listListeningPorts } = require('../dist/ports.js')
+  const { listListeningPorts } = require('../dist/network/ports.js')
   const listeners = (await listListeningPorts()).filter((entry) => entry.port === view.project.port)
   assert.equal(listeners.length > 0, true)
 
@@ -693,7 +693,7 @@ test('repeated log lines collapse into a counter and are published as updates', 
 })
 
 test('service logs survive a restart and the previous run is kept on relaunch', async () => {
-  const { currentLogPath, previousLogPath } = require('../dist/logfiles.js')
+  const { currentLogPath, previousLogPath } = require('../dist/services/logfiles.js')
   const id = 'persist-test'
   processes.appendProcessLog(id, 'stdout', 'first run')
   processes.appendProcessLog(id, 'stderr', 'first run crashed')
@@ -734,7 +734,7 @@ test('the event stream pushes status changes to connected clients', async (conte
 })
 
 test('ports that browsers refuse to open are never assigned', async () => {
-  const { pickRandomPort, BROWSER_BLOCKED_PORTS } = require('../dist/ports.js')
+  const { pickRandomPort, BROWSER_BLOCKED_PORTS } = require('../dist/network/ports.js')
   // Everything in the frontend ranges is taken except two blocked ports and one ordinary one.
   const used = new Set()
   for (let port = 3000; port <= 5999; port += 1) used.add(port)

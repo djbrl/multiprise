@@ -5,7 +5,7 @@ Thanks for helping. Issues and pull requests are welcome, small ones especially.
 ## Before you start
 
 - **Bugs:** open an issue with what you did, what happened, and the service's output if a launch failed (`multiprise logs <service>`). A project layout that is discovered wrongly is easiest to fix with the folder tree and its `package.json` scripts, `Cargo.toml` or Compose file.
-- **Features:** open an issue first for anything larger than a fix, so we can agree on the shape before you spend time on it. [`upcoming-features.md`](./upcoming-features.md) lists what is planned.
+- **Features:** open an issue first for anything larger than a fix, so we can agree on the shape before you spend time on it. [`docs/roadmap.md`](./docs/roadmap.md) lists what is planned.
 - **Security issues:** don't open an issue; see [SECURITY.md](./SECURITY.md).
 
 ## Working on it
@@ -17,7 +17,7 @@ npm install
 npm run dev          # the orchestrator, the renderer and Electron, with free dev ports
 ```
 
-Run the CLI from source with `npm run cli -- <command>`. The app run from source keeps its projects in `backend/data/`, separate from an installed Multiprise.
+[Project Structure](./README.md#project-structure) in the README says where each part lives. Run the CLI from source with `npm run cli -- <command>`. The app run from source keeps its projects in `backend/data/`, separate from an installed Multiprise.
 
 ## Checks
 

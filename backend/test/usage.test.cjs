@@ -22,7 +22,7 @@ const {
   parseTopMemory,
   parseVmStat,
   usageReport
-} = require('../dist/usage.js')
+} = require('../dist/system/usage.js')
 
 test('memory in use is app memory, wired and compressed, not everything that is not free', () => {
   const output = [
@@ -183,7 +183,7 @@ test('a server started outside the app is measured, with the processes it starte
   const server = spawn(process.execPath, ['-e', script], { cwd: folder, stdio: ['ignore', 'pipe', 'ignore'] })
   context.after(() => server.kill('SIGTERM'))
   const kidPid = await new Promise((resolve) => server.stdout.once('data', (data) => resolve(Number(String(data)))))
-  const { listListeningPorts } = require('../dist/ports.js')
+  const { listListeningPorts } = require('../dist/network/ports.js')
   const report = await usageReport(await listListeningPorts(), [])
   const row = report.servers.find((entry) => entry.server.pid === server.pid)
   assert.ok(row, 'the server is listed')

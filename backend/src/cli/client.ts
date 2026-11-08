@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import http from 'node:http'
 import path from 'node:path'
-import { API_TOKEN_HEADER, packagedDataDir, readDiscoveryFile, type DiscoveryInfo } from '../discovery'
+import { API_TOKEN_HEADER, packagedDataDir, readDiscoveryFile, type DiscoveryInfo } from '../api/discovery'
 import type { AppEvent } from '../events'
 import { dataDir } from '../store'
 

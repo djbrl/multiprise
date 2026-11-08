@@ -13,7 +13,7 @@ import type {
   UsageReport
 } from '../types'
 import type { MultipriseClient } from './client'
-import { findRepository } from '../repository'
+import { findRepository } from '../projects/repository'
 import {
   isPathLike,
   listProjects,

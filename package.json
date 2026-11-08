@@ -11,7 +11,7 @@
     "url": "https://github.com/Djbrl/multiprise/issues"
   },
   "type": "module",
-  "main": "main.cjs",
+  "main": "electron/main.cjs",
   "bin": {
     "multiprise": "backend/dist/cli/index.js"
   },
@@ -67,20 +67,15 @@
       "output": "release"
     },
     "files": [
-      "main.cjs",
-      "menu-bar.cjs",
-      "cli-install.cjs",
-      "splash.cjs",
-      "preload.cjs",
-      "shell-path.cjs",
+      "electron/*.cjs",
       "package.json",
-      "port-ranges.json",
       "build/icon.png",
       "build/trayTemplate.png",
       "build/trayTemplate@2x.png",
       "renderer/dist/**/*",
       "backend/dist/**/*",
-      "backend/package.json"
+      "backend/package.json",
+      "backend/port-ranges.json"
     ],
     "extraResources": [
       {

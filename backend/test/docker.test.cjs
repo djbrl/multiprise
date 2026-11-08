@@ -7,7 +7,7 @@ const test = require('node:test')
 // Never let tests touch the developer's real backend/data directory.
 process.env.MULTIPRISE_DATA_DIR = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'multiprise-docker-data-'))
 
-const { parseComposePs, composeStatus } = require('../dist/docker.js')
+const { parseComposePs, composeStatus } = require('../dist/services/docker.js')
 const { startServer, stopServer } = require('../dist/index.js')
 
 const container = (service, extra = {}) => ({ service, state: 'running', health: '', exit_code: 0, ports: [], ...extra })

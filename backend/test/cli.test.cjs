@@ -10,14 +10,14 @@ const test = require('node:test')
 process.env.MULTIPRISE_DATA_DIR = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'multiprise-cli-data-'))
 
 const { startServer, stopServer } = require('../dist/index.js')
-const { readDiscoveryFile, writeDiscoveryFile, DISCOVERY_FILE } = require('../dist/discovery.js')
+const { readDiscoveryFile, writeDiscoveryFile, DISCOVERY_FILE } = require('../dist/api/discovery.js')
 const { resolveTarget, resolveService, resolveCurrentProject, UsageError } = require('../dist/cli/services.js')
 
 const CLI = path.join(__dirname, '..', 'dist', 'cli', 'index.js')
 
 // Secrets normally go to the macOS Keychain through Electron; tests keep them in memory.
 const secretValues = new Map()
-require('../dist/environment.js').setSecretStore({
+require('../dist/services/environment.js').setSecretStore({
   get: async (id, key) => secretValues.get(`${id}:${key}`) ?? null,
   set: async (id, key, value) => { secretValues.set(`${id}:${key}`, value) },
   remove: async (id, key) => { for (const name of [...secretValues.keys()]) if (name.startsWith(`${id}:${key ?? ''}`)) secretValues.delete(name) }

@@ -9,7 +9,7 @@ const test = require('node:test')
 // Never let tests touch the developer's real backend/data directory.
 process.env.MULTIPRISE_DATA_DIR = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'multiprise-hostnames-data-'))
 
-const { hostRoutes, hostUrls } = require('../dist/hostnames.js')
+const { hostRoutes, hostUrls } = require('../dist/network/hostnames.js')
 const { startServer, stopServer } = require('../dist/index.js')
 
 let created = 0
