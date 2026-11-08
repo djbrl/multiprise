@@ -43,6 +43,32 @@ export function detectStartupConflict(output: string): StartupConflict | null {
   return { pid, port, url, cwd }
 }
 
+function validPort(value?: string) {
+  const n = Number(value)
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : undefined
+}
+
+// The port the service actually tried to bind: from the error itself (`EADDRINUSE ... :::8000`), else from the
+// command line npm echoes (`> python3 -m http.server 8000`), which catches commands that hard-code their port.
+export function detectBusyPort(output: string): number | undefined {
+  const fromError =
+    output.match(/EADDRINUSE[^\n]*?(?:\]|[\d.]|::):(\d{2,5})\b/i)?.[1] ??
+    output.match(/\bport\s+(\d{2,5})\s+is\s+(?:already\s+)?in\s+use/i)?.[1]
+  if (fromError) return validPort(fromError)
+  for (const line of output.split('\n')) {
+    const command = line.match(/(?:^|\s)>\s+(.+)$/)?.[1]
+    if (!command) continue
+    const hardCoded =
+      command.match(/--port[=\s]+(\d{2,5})\b/)?.[1] ??
+      command.match(/(?:^|\s)-p\s+(\d{2,5})\b/)?.[1] ??
+      command.match(/\bPORT=(\d{2,5})\b/)?.[1] ??
+      command.match(/\bhttp\.server\s+(\d{2,5})\b/)?.[1] ??
+      command.match(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d{2,5})\b/)?.[1]
+    if (hardCoded) return validPort(hardCoded)
+  }
+  return undefined
+}
+
 export function classifyStartupFailure(output: string, fallback: string, port?: number): StartupFailure {
   if (/cannot find module[^\n]*(?:dist|build|out)[/\\]/i.test(output) || /module_not_found[^\n]*(?:dist|build|out)[/\\]/i.test(output)) {
     return {
@@ -61,6 +87,14 @@ export function classifyStartupFailure(output: string, fallback: string, port?: 
     }
   }
   if (/EADDRINUSE|address already in use/i.test(output)) {
+    const busy = detectBusyPort(output)
+    if (busy && busy !== port) {
+      return {
+        code: 'port-in-use',
+        message: 'This service tried to use port ' + busy + ', which another program is already using. Its command ignores the port Multiprise assigned' + (port ? ' (' + port + ')' : '') + ', so launching again will not help.',
+        recovery: 'Free port ' + busy + ', or change the command to use the assigned port (the PORT environment variable or a --port flag).'
+      }
+    }
     return {
       code: 'port-in-use',
       message: 'Port ' + (port ?? 'requested') + ' became unavailable during startup.',

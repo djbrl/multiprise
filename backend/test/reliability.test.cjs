@@ -228,6 +228,26 @@ test('common startup errors are classified into actionable categories', () => {
   assert.equal(classifyStartupFailure('HTTP readiness failed: service kept returning HTTP 503 on port 4000', 'failed', 4000).code, 'unhealthy-response')
 })
 
+test('a command that hard-codes a busy port is reported with that port, not the assigned one', () => {
+  // The python case from a real launch: Python's error doesn't name the port, npm's command echo does.
+  const python = classifyStartupFailure([
+    '> start',
+    '> python3 -m http.server 8000',
+    'OSError: [Errno 48] Address already in use'
+  ].join('\n'), 'failed', 4616)
+  assert.equal(python.code, 'port-in-use')
+  assert.match(python.message, /port 8000/)
+  assert.match(python.message, /\(4616\)/)
+  assert.doesNotMatch(python.recovery, /Launch again/)
+
+  const node = classifyStartupFailure('Error: listen EADDRINUSE: address already in use :::8000', 'failed', 4616)
+  assert.match(node.message, /port 8000/)
+
+  // The assigned port itself was taken in the meantime: relaunching does help.
+  const race = classifyStartupFailure('> vite --port 4437\nError: listen EADDRINUSE: address already in use 127.0.0.1:4437', 'failed', 4437)
+  assert.match(race.recovery, /Launch again/)
+})
+
 test('an already-running dev server exposes a recoverable process conflict', () => {
   const output = [
     'Another vinext dev server is already running.',
