@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multiprise privacy</title>
+<meta name="description" content="What the Multiprise site collects: only the email address you give the Windows waitlist, used once to say the Windows build is ready.">
+<meta name="theme-color" content="#fcfcfb">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link href="https://api.fontshare.com/v2/css?f[]=general-sans@500&display=swap" rel="stylesheet">
+<link href="https://api.fontshare.com/v2/css?f[]=switzer@400,500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #fcfcfb;
+  --text: #1c1917;
+  --muted: #6b6f76;
+  --faint: #a5a7ab;
+  --line: rgba(28, 25, 23, .09);
+  --live: #ea580c;
+  --live-soft: rgba(234, 88, 12, .12);
+  --error: #e5484d;
+  --display: "General Sans", -apple-system, system-ui, sans-serif;
+  --body: "Switzer", -apple-system, system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 400 16px/1.6 var(--body); -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-underline-offset: 3px; }
+nav { height: 60px; border-bottom: 1px solid var(--line); }
+.wrap { max-width: 680px; margin: 0 auto; padding: 0 16px; }
+nav .wrap { height: 100%; display: flex; align-items: center; }
+nav img { height: 24px; width: auto; display: block; }
+main { padding: 56px 0 72px; }
+h1, h2 { font-family: var(--display); font-weight: 500; letter-spacing: -0.028em; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(32px, 6vw, 44px); line-height: 1.1; }
+h2 { font-size: 20px; margin-top: 40px; }
+p, ul { margin: 12px 0 0; color: var(--muted); text-wrap: pretty; }
+ul { padding-left: 20px; }
+li + li { margin-top: 6px; }
+b { color: var(--text); font-weight: 500; }
+.lede { font-size: 18px; margin-top: 16px; }
+.updated { font-size: 13px; color: var(--faint); margin-top: 16px; }
+form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+input[type=email] { height: 40px; flex: 1 1 240px; min-width: 0; border-radius: 8px; border: 1px solid rgba(28,25,23,.18); background: #fff; padding: 0 12px; font: 15px var(--body); color: var(--text); outline: none; }
+input[type=email]:focus { border-color: var(--live); box-shadow: 0 0 0 3px var(--live-soft); }
+button { height: 40px; border: 0; border-radius: 8px; padding: 0 16px; background: var(--text); color: #fff; font: 500 15px var(--body); cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+.hp, .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.msg { font-size: 14px; margin-top: 10px; }
+.msg.err { color: var(--error); }
+.msg.ok { color: var(--text); }
+footer { border-top: 1px solid var(--line); padding: 26px 0 48px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<nav><div class="wrap"><a href="/" aria-label="Multiprise home"><img src="lockup.svg" alt="Multiprise" width="132" height="24"></a></div></nav>
+
+<main>
+  <div class="wrap">
+    <h1>Privacy</h1>
+    <p class="lede">This site collects one thing: the email address you give the Windows waitlist, if you join it. The Multiprise app itself has no accounts, analytics or telemetry.</p>
+    <p class="updated">Last updated 8 November 2026</p>
+
+    <h2>The Windows waitlist</h2>
+    <ul>
+      <li><b>What is kept:</b> your email address and the time you joined. Nothing else from the form is stored.</li>
+      <li><b>What it is for:</b> one email telling you the Windows build is ready. No newsletter, no marketing, and the list is never sold or shared.</li>
+      <li><b>Where it is:</b> a private Vercel Blob store. Only the maintainer can export it.</li>
+      <li><b>How long:</b> until that email goes out, or until Windows plans are dropped. Then the list is deleted.</li>
+    </ul>
+
+    <h2>Leave the list</h2>
+    <p>Enter the address you used and it is removed straight away. The reply is the same whether or not the address was on the list.</p>
+    <form id="leave" novalidate>
+      <label class="sr" for="email">Email address</label>
+      <input id="email" name="email" type="email" required placeholder="you@example.com" autocomplete="email">
+      <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <button type="submit" id="leaveBtn">Remove me</button>
+    </form>
+    <p class="msg" id="leaveMsg" role="status" hidden></p>
+
+    <h2>Everything else</h2>
+    <ul>
+      <li><b>No cookies, analytics or trackers</b> on this site.</li>
+      <li><b>Hosting:</b> the site runs on Vercel, which sees your IP address and browser details to serve pages and to rate-limit the waitlist against abuse.</li>
+      <li><b>Fonts</b> load from Fontshare, which sees the same request details when your browser fetches them.</li>
+    </ul>
+  </div>
+</main>
+
+<footer><div class="wrap"><a href="/">Multiprise</a></div></footer>
+
+<script>
+const form = document.getElementById("leave"), msg = document.getElementById("leaveMsg"), btn = document.getElementById("leaveBtn");
+const say = (text, ok) => { msg.textContent = text; msg.className = "msg " + (ok ? "ok" : "err"); msg.hidden = false; };
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const email = form.elements.email.value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return say("Enter a valid email address.");
+  btn.disabled = true;
+  try {
+    const response = await fetch("/api/waitlist", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, website: form.elements.website.value })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 429) throw new Error("Too many attempts. Try again in a few minutes.");
+    if (!response.ok) throw new Error(data.error || "Something went wrong. Try again in a moment.");
+    say("Done. If that address was on the list, it has been removed.", true);
+    form.reset();
+  } catch (error) {
+    say(error.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

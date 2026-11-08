@@ -19,6 +19,10 @@ One static file, `index.html`. No build step. Preview with `python3 -m http.serv
 
 **Windows waitlist:** the band under the header ("Join the waitlist") posts to `api/waitlist.js`, which stores each address as its own blob in the private Vercel Blob store `multiprise-waitlist` (linked to this project as `BLOB_READ_WRITE_TOKEN`). Only the address and the time it was added are kept; joining twice keeps one entry; a hidden honeypot field turns away simple bots. Set `SITE.windows` to `null` to remove the band.
 
+`privacy.html` tells visitors what is kept, that the list is deleted once the Windows build is announced, and has a **Leave the list** form (`DELETE /api/waitlist`, which answers the same whether or not the address was on it). It is linked from the band and the footer; keep it true if the waitlist changes.
+
+**Rate limits:** the Vercel Firewall rule "Waitlist rate limit" allows 10 requests per IP per 10 minutes on `/api/waitlist` and answers 429 beyond that (Hobby allows one rate-limit rule per project). Check it with `vercel firewall rules list`. The function repeats the same per-IP limit in memory and caps joins and removals at 300 an hour per instance, so preview deployments and a disabled rule still have a ceiling.
+
 To download the list as CSV (the key is in `site/.env.waitlist.local`, which is gitignored and never deployed; it is also set on Vercel as `WAITLIST_ADMIN_KEY`, which is write-only there):
 
 ```bash
