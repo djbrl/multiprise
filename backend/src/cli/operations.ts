@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import type {
+  CleanupReport,
+  DiskReport,
   EnvironmentResponse,
   EnvVariable,
   ProcessInstance,
@@ -223,6 +225,13 @@ export async function runningServers(client: MultipriseClient) {
 
 export const usageReport = (client: MultipriseClient) =>
   client.request<UsageReport>('GET', '/api/usage')
+
+export const cleanupReport = (client: MultipriseClient) =>
+  client.request<CleanupReport>('GET', '/api/cleanup')
+
+// Waits for a measurement in progress, which can take a while the first time.
+export const diskReport = (client: MultipriseClient, refresh = false) =>
+  client.request<DiskReport>('GET', `/api/cleanup/disk?wait=1${refresh ? '&refresh=1' : ''}`, undefined, 180000)
 
 export const stopRunningServer = (client: MultipriseClient, server: RunningServer) =>
   client.request('POST', '/api/running/stop', { key: server.key })

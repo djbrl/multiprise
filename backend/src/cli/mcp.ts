@@ -3,6 +3,8 @@ import { ApiError, connect, type MultipriseClient } from './client'
 import {
   addFolders,
   chooseRunningServers,
+  cleanupReport,
+  diskReport,
   dependencyNames,
   getEnvironment,
   getSettings,
@@ -337,6 +339,24 @@ const TOOLS: Tool[] = [
     inputSchema: { type: 'object', properties: {} },
     annotations: { readOnlyHint: true },
     run: async (client) => usageReport(client)
+  },
+  {
+    name: 'get_cleanup_report',
+    description: 'What needs tidying across the user\'s projects. memory: each running service\'s memory since it started; status "growing" means it kept ' +
+      'climbing for at least 20 minutes after warm-up without coming back down (growth_per_hour in bytes), often worth a restart_service, though Multiprise ' +
+      'cannot tell a leak in the code from tooling caches. idle: services with no output and next to no CPU for hours. worktrees: tracked git worktrees ' +
+      'whose work is already on the main branch, gone, or untouched for a month. leftovers: servers whose terminal, agent or folder is gone. docker: ' +
+      'stopped containers, unused volumes and dangling images. Set include_disk for the folders each project can rebuild (node_modules, build output) ' +
+      'and their size; measuring can take a minute. Only act on what the user asked for.',
+    inputSchema: {
+      type: 'object',
+      properties: { include_disk: { type: 'boolean', default: false } }
+    },
+    annotations: { readOnlyHint: true },
+    run: async (client, args) => {
+      const report = await cleanupReport(client)
+      return args.include_disk ? { ...report, disk: (await diskReport(client)).projects } : report
+    }
   },
   {
     name: 'stop_running_server',

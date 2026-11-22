@@ -111,6 +111,18 @@ test('first run: add a project, launch it, read its logs and stop it', async () 
       return view?.webContents.getURL() ?? ''
     })
     await expect.poll(shown).toMatch(/^http:\/\/localhost:\d+/)
+  })
+
+  await test.step('Cleanup tracks its memory from the start', async () => {
+    await page.getByRole('button', { name: /^Cleanup/ }).click()
+    const memory = page.getByRole('region', { name: 'Memory tracking' })
+    // The sampler reads every 30 seconds; the first reading after the start is enough.
+    await expect(async () => {
+      await page.getByRole('button', { name: 'Check again' }).click()
+      await expect(memory.getByText('e2e-shop')).toBeVisible({ timeout: 2000 })
+    }).toPass({ timeout: 60000 })
+    await expect(memory.getByText('Warming up')).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Disk use' })).toBeVisible()
     await page.getByTitle('Home').click()
   })
 

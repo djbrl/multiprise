@@ -247,6 +247,87 @@ export type UsageReport = {
   apps: AppUsage[]
 }
 
+// How a running service's memory has moved since it started (see system/memory.ts).
+// 'warming-up' until there is enough to judge: dev servers grow on their own at first.
+export type MemoryTrend = {
+  service_id: string
+  name: string
+  project: string
+  project_path: string
+  started_at: string
+  status: 'warming-up' | 'steady' | 'growing'
+  // Bytes: now, when first measured, and the most it reached.
+  current: number
+  first: number
+  peak: number
+  // Bytes per hour over the last stretch measured; null while warming up.
+  growth_per_hour: number | null
+  // How long it has been measured, which can be shorter than it has run.
+  measured_ms: number
+  // Evenly spaced readings for a small chart, oldest first.
+  points: number[]
+}
+
+// A service that has been quiet for hours: no output and next to no CPU.
+export type IdleServer = {
+  service_id: string
+  name: string
+  project: string
+  project_path: string
+  started_at: string
+  quiet_since: string
+}
+
+// A tracked worktree that has most likely served its purpose.
+export type StaleWorktree = {
+  root: string
+  name: string
+  // The repository it belongs to.
+  project: string
+  branch: string | null
+  reason: 'missing' | 'merged' | 'inactive'
+  detail: string
+  last_commit_at: string | null
+  service_ids: string[]
+}
+
+export type DockerLeftovers = {
+  // Docker is installed and its engine answered.
+  available: boolean
+  containers: Array<{ id: string; name: string; image: string; project: string | null; status: string }>
+  // Volumes no container uses any more; removing one deletes its data.
+  volumes: Array<{ name: string; project: string | null }>
+  images: Array<{ id: string; size: string; created: string }>
+}
+
+export type CleanupReport = {
+  memory: MemoryTrend[]
+  idle: IdleServer[]
+  worktrees: StaleWorktree[]
+  // Servers whose terminal, agent or folder is gone.
+  leftovers: RunningServer[]
+  docker: DockerLeftovers
+}
+
+// Folders a project can rebuild (dependencies, build output, caches), which git ignores.
+export type DiskFolder = { path: string; relative: string; bytes: number }
+
+export type ProjectDiskUse = {
+  root: string
+  name: string
+  bytes: number
+  folders: DiskFolder[]
+  // When one of its services last ran, as far as Multiprise knows.
+  last_run_at: string | null
+  running: boolean
+}
+
+export type DiskReport = {
+  projects: ProjectDiskUse[]
+  measured_at: string | null
+  measuring: boolean
+}
+
 // Whether Claude Code is set up to run dev servers through Multiprise.
 export type AgentStatus = {
   installed: boolean

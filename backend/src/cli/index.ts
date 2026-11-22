@@ -5,7 +5,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { execFile } from 'node:child_process'
 import { agentStatus, connectAgents, disconnectAgents } from '../system/agents'
-import type { AgentStatus, EnvironmentResponse, LogLine, ProcessInstance, RunningServer, UsageReport, UsedPort } from '../types'
+import type { AgentStatus, CleanupReport, DiskReport, EnvironmentResponse, LogLine, ProcessInstance, RunningServer, UsageReport, UsedPort } from '../types'
 import { connect, NotRunningError, type MultipriseClient } from './client'
 import { runMcpServer } from './mcp'
 import {
@@ -27,6 +27,8 @@ import {
   runningServers,
   serviceDetails,
   usageReport,
+  cleanupReport,
+  diskReport,
   setCommand,
   setDependencies,
   setPort,
@@ -88,7 +90,7 @@ const VALUE_OPTIONS: Record<string, string> = {
 }
 const SWITCHES: Record<string, string> = {
   '--json': 'json', '-f': 'follow', '--follow': 'follow', '-y': 'yes', '--yes': 'yes', '--secret': 'secret',
-  '--auto': 'auto', '--clear': 'clear', '--dry-run': 'dryRun', '--leftovers': 'leftovers', '-h': 'help', '--help': 'help', '-v': 'version', '--version': 'version'
+  '--auto': 'auto', '--clear': 'clear', '--dry-run': 'dryRun', '--leftovers': 'leftovers', '--disk': 'disk', '-h': 'help', '--help': 'help', '-v': 'version', '--version': 'version'
 }
 
 type Args = {
@@ -249,6 +251,34 @@ function printRunning(servers: RunningServer[]) {
 
 const formatBytes = (bytes: number) =>
   bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`
+
+function printCleanup(report: CleanupReport, disk: DiskReport | null) {
+  const section = (title: string, lines: string[]) => {
+    console.log(`${bold(title)}${lines.length ? '' : dim('  nothing')}`)
+    for (const line of lines) console.log(`  ${line}`)
+    console.log()
+  }
+  const label = (project: string, name: string) => name === project ? name : `${project} / ${name}`
+  section('Memory', report.memory.map((trend) => {
+    const change = trend.status === 'growing' ? yellow(`growing ${formatBytes(trend.growth_per_hour ?? 0)}/h`)
+      : trend.status === 'steady' ? dim('steady') : dim('warming up')
+    return `${formatBytes(trend.current).padStart(8)}  ${label(trend.project, trend.name)}  ${change}`
+  }))
+  section('Idle servers', report.idle.map((server) => `${label(server.project, server.name)}  ${dim(`quiet since ${new Date(server.quiet_since).toLocaleString()}`)}`))
+  section('Left behind', report.leftovers.map((server) => `${runningServerName(server)}  ${dim(server.leftover_reason ?? '')}`))
+  section('Stale worktrees', report.worktrees.map((worktree) => `${worktree.project} / ${worktree.name}  ${dim(worktree.detail)}`))
+  if (report.docker.available) {
+    section('Docker', [
+      ...report.docker.containers.map((container) => `container ${container.name}  ${dim(container.status)}`),
+      ...report.docker.volumes.map((volume) => `volume ${volume.name}  ${dim('unused')}`),
+      ...report.docker.images.map((image) => `image ${image.id}  ${dim(`${image.size}, ${image.created}`)}`)
+    ])
+  }
+  if (disk) {
+    section('Disk', disk.projects.filter((project) => project.bytes).map((project) =>
+      `${formatBytes(project.bytes).padStart(8)}  ${project.name}  ${dim(project.folders.slice(0, 3).map((folder) => folder.relative).join(', '))}`))
+  }
+}
 
 function printUsage(report: UsageReport) {
   const { machine } = report
@@ -588,6 +618,23 @@ const COMMANDS: Command[] = [
       const report = await usageReport(client)
       if (json) printJson(report)
       else printUsage(report)
+      return 0
+    }
+  },
+  {
+    names: ['cleanup'],
+    usage: 'cleanup [--disk]',
+    short: 'cleanup [--disk]',
+    summary: 'What keeps growing, sits idle or piles up across your projects',
+    group: 'Services',
+    details: 'Memory: each running service since it started; growing means it kept climbing after warm-up\n' +
+      'without coming back down. Idle: no output and next to no CPU for hours. Also servers left\n' +
+      'behind, worktrees whose work is already merged, and Docker leftovers. --disk adds the folders\n' +
+      'each project can rebuild (node_modules, build output) and their size. Clean up in the app.',
+    run: async ({ client, args, json }) => {
+      const [report, disk] = await Promise.all([cleanupReport(client), args.options.disk ? diskReport(client) : null])
+      if (json) printJson(disk ? { ...report, disk: disk.projects } : report)
+      else printCleanup(report, disk)
       return 0
     }
   },

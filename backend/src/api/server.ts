@@ -13,6 +13,7 @@ import { registerServiceRoutes } from './routes/services'
 import { registerScanRoutes } from './routes/scans'
 import { registerPortRoutes } from './routes/ports'
 import { registerRunningRoutes } from './routes/running'
+import { registerCleanupRoutes } from './routes/cleanup'
 
 export { API_TOKEN_HEADER, type ApiSecurityOptions }
 
@@ -50,6 +51,7 @@ export async function createApp(state: AppState, security: ApiSecurityOptions = 
   registerScanRoutes(app, context)
   registerPortRoutes(app, context)
   registerRunningRoutes(app, context)
+  registerCleanupRoutes(app, context)
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const status = err instanceof HttpError

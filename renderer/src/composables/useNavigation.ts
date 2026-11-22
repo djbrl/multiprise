@@ -5,7 +5,7 @@ import { useProjects } from './useProjects'
 
 // Which page is showing and which project is open.
 
-export type Section = 'home' | 'projects' | 'activity' | 'settings'
+export type Section = 'home' | 'projects' | 'activity' | 'cleanup' | 'settings'
 
 const { folderGroups, onProjectsLoaded, groupForService } = useProjects()
 

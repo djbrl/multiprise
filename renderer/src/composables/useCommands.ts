@@ -87,6 +87,7 @@ const paletteCommands = computed<PaletteCommand[]>(() => {
     { id: 'add', group: 'App', title: 'Add projects…', shortcut: '⌘O', run: () => openPicker() },
     { id: 'home', group: 'App', title: 'Go home', run: () => goHome() },
     { id: 'activity', group: 'App', title: 'Open activity', keywords: 'cpu memory usage performance swap', run: () => { activeSection.value = 'activity' } },
+    { id: 'cleanup', group: 'App', title: 'Open cleanup', keywords: 'memory leak growing idle disk node_modules worktrees docker tidy', run: () => { activeSection.value = 'cleanup' } },
     { id: 'welcome', group: 'App', title: 'Show the welcome tour', keywords: 'onboarding intro help', run: () => { onboardingOpen.value = true } },
     { id: 'settings', group: 'App', title: 'Open settings', shortcut: '⌘,', run: () => { activeSection.value = 'settings' } },
     {

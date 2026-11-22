@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import multipriseIconUrl from '../assets/multiprise-icon.svg'
 import UsageMeters from './UsageMeters.vue'
+import { useCleanup } from '../composables/useCleanup'
 import { useNavigation } from '../composables/useNavigation'
 import { useOverlays } from '../composables/useOverlays'
 import { usePorts } from '../composables/usePorts'
@@ -21,6 +22,7 @@ const { activeSection, selectedGroupKey, projectsExpanded, openDetails, openGrou
 const { usedPorts, portsLoading, portsError, activePortsExpanded, toggleActivePorts, usedPortProjectName, usedPortTitle } = usePorts()
 const { openGroupMenu, paletteOpen } = useOverlays()
 const { openPicker } = useProjectPicker()
+const { attentionCount } = useCleanup()
 
 function toggleProjectsSection() {
   if (activeSection.value !== 'projects') {
@@ -72,6 +74,21 @@ function toggleProjectsSection() {
         :class="activeSection === 'home' ? 'nav-selected bg-[var(--selection)] font-medium text-[var(--text-strong)]' : 'text-[var(--text-muted)]'"
         @click="goHome"
       >Home</button>
+
+      <button
+        v-if="!collapsed"
+        type="button"
+        class="flex h-[30px] w-full shrink-0 items-center justify-between rounded-md px-2 text-left transition-colors hover:bg-[var(--hover)]"
+        :class="activeSection === 'cleanup' ? 'nav-selected bg-[var(--selection)] font-medium text-[var(--text-strong)]' : 'text-[var(--text-muted)]'"
+        @click="activeSection = 'cleanup'"
+      >
+        <span>Cleanup</span>
+        <span
+          v-if="attentionCount"
+          class="min-w-[18px] rounded-full bg-[color-mix(in_srgb,var(--attention)_18%,transparent)] px-1.5 text-center text-[11px] font-medium leading-[18px] text-[var(--attention-text)]"
+          :title="`${attentionCount} thing${attentionCount === 1 ? '' : 's'} to look at`"
+        >{{ attentionCount }}</span>
+      </button>
 
       <button
         v-if="!collapsed && (usedPorts.length || portsLoading || portsError)"

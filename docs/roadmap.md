@@ -47,6 +47,7 @@ Most servers now get started by terminals and coding agents, which never saw the
 
 - [ ] **Stacks** — named groups of services across repositories, launched together.
 - [x] **CPU and memory per service** — Activity, `multiprise usage` and the `get_usage` MCP tool.
+- [x] **Cleanup** — memory tracking (memory that keeps growing after warm-up), idle and left-behind servers, stale worktrees, disk use per project with clean-to-Trash, Docker leftovers; `multiprise cleanup` and the `get_cleanup_report` MCP tool.
 - [ ] **Git branch and working-tree status** — on each project, with optional restart on branch switch.
 - [ ] **Project tasks** — one-off test, migrate, seed, build and lint commands with the service's cwd and env.
 - [ ] **Browser viewport presets and tab restoration.**

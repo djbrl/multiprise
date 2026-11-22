@@ -8,6 +8,7 @@ import { type Launches } from './services/launch'
 import { superviseServices, type Supervisor, type SupervisorOptions } from './services/supervisor'
 import { watchDockerProjects, type DockerWatcher } from './services/docker'
 import { createHostnameController, type HostnameController } from './network/hostnames'
+import { trackMemory, type MemoryTracker } from './system/memory'
 
 export { subscribe } from './events'
 import { createState, normalizeProjects, type AppState } from './state'
@@ -22,6 +23,8 @@ export type BackendInstance = {
   advertisedIn: string | null
   supervisor: Supervisor
   docker: DockerWatcher
+  // Samples every running service's memory, for memory tracking and idle servers.
+  memory: MemoryTracker
   // The *.localhost proxy; its port is null when it is off or could not start (see `error`).
   hostnames: HostnameController
 }
@@ -127,7 +130,8 @@ export const startServer = async (options: StartServerOptions = {}): Promise<Bac
     advertisedIn,
     hostnames,
     supervisor: superviseServices(state, launches, options.supervisor),
-    docker: watchDockerProjects(state, options.dockerIntervalMs)
+    docker: watchDockerProjects(state, options.dockerIntervalMs),
+    memory: trackMemory()
   }
 }
 
@@ -135,6 +139,7 @@ export const stopServer = async (backend?: BackendInstance | null): Promise<void
   // Stopping services must not look like crashes to be restarted.
   backend?.supervisor.stop()
   backend?.docker.stop()
+  backend?.memory.stop()
   await backend?.hostnames.close()
   if (backend?.advertisedIn) {
     await removeDiscoveryFile(backend.advertisedIn).catch(() => {})

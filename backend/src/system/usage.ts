@@ -385,6 +385,29 @@ const latestDockerStats = slowReading(
   DOCKER_STATS_CACHE_MS
 )
 
+// What each service Multiprise runs takes, with the processes it started. Lighter than the full
+// report (no lsof, top or Docker), so it can be read in the background all day.
+export async function managedServiceUse(): Promise<Map<string, ResourceUse>> {
+  const groups = new Map<number, string>()
+  for (const id of managedProcessIds()) {
+    const pid = getProcessPid(id)
+    if (pid) groups.set(pid, id)
+  }
+  const use = new Map<string, ResourceUse>()
+  if (!groups.size) return use
+  const processes = parseProcessUsage(await stdoutOf('ps', ['-A', '-o', 'pid=,ppid=,pgid=,%cpu=,rss=']))
+  const owned = attributeProcesses(processes, { pids: new Map(), groups })
+  const footprints = await currentFootprints([...owned.values()].flat().map((entry) => entry.pid)) ?? new Map<number, number>()
+  const cores = os.cpus().length
+  for (const [id, entries] of owned) {
+    use.set(id, {
+      cpu: round(entries.reduce((sum, entry) => sum + entry.cpu, 0) / cores),
+      memory: entries.reduce((sum, entry) => sum + (footprints.get(entry.pid) ?? entry.rss), 0)
+    })
+  }
+  return use
+}
+
 const MULTIPRISE = 'multiprise'
 
 export async function usageReport(listening: Awaited<ReturnType<typeof listListeningPorts>>, projects: Project[]): Promise<UsageReport> {

@@ -51,6 +51,16 @@ multiprise running stop --leftovers
 
 `multiprise usage` shows this Mac's CPU, memory and memory pressure, what each of those servers takes, and the heaviest of everything else: apps with their helper processes, scripts (named after the folder they run in), programs and macOS itself. Activity in the app shows the same, with the last few minutes as a graph, and the sidebar keeps the two machine figures in view. CPU is a share of the whole machine. Memory per server is what Activity Monitor calls footprint, including what has been compressed or swapped out, summed over the server and the processes it started.
 
+`multiprise cleanup` (and **Cleanup** in the app) shows what needs tidying across your projects:
+
+- **Memory tracking.** Every running service is measured every 30 seconds in the background, from the moment it starts. After a 5-minute warm-up, memory that keeps rising for 20 minutes or more without coming back down is flagged as growing, with how fast and a one-click restart. Multiprise cannot tell a leak in your code from tooling that holds on to more, so it says "growing", not "leaking".
+- **Idle servers:** services with no output and next to no CPU for 2 hours. **Left behind:** servers whose terminal, agent or folder is gone.
+- **Stale worktrees:** tracked worktrees whose commits are all on the main branch, that have had no commits for a month, or whose folder is gone. Worktrees with uncommitted changes are never listed. Untracking leaves the folder and branch alone.
+- **Disk use:** the folders each project can rebuild (`node_modules`, `.next`, build output, caches), counted only when git ignores them. Cleaning moves them to the Trash and is refused while the project runs. `--disk` adds them to the CLI report.
+- **Docker leftovers:** stopped containers, volumes no container uses, and untagged images, each removed only after a second press. Removing a volume deletes its data.
+
+The `get_cleanup_report` MCP tool gives an agent the same report.
+
 Everything the app does is available too, so an agent can run Multiprise from a terminal alone:
 
 ```bash

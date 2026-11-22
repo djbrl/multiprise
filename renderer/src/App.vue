@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ActivityView from './views/ActivityView.vue'
+import CleanupView from './views/CleanupView.vue'
 import AddProjectsDialog from './components/AddProjectsDialog.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import CommandPalette from './components/CommandPalette.vue'
@@ -12,6 +13,7 @@ import ProjectPage from './views/ProjectPage.vue'
 import ServiceConfigDialog from './components/ServiceConfigDialog.vue'
 import SettingsView from './views/SettingsView.vue'
 import { useBrowserTabs } from './composables/useBrowserTabs'
+import { useCleanup } from './composables/useCleanup'
 import { useCommands } from './composables/useCommands'
 import { useEventStream } from './composables/useEventStream'
 import { useLogs } from './composables/useLogs'
@@ -43,6 +45,7 @@ const { loadRecentProjects, addFolders } = useProjectPicker()
 const { refreshSelectedInstances, stopActionTimers } = useServiceActions()
 const { paletteCommands, showLogs, handleKeydown } = useCommands()
 const { startUsage, stopUsage } = useUsage()
+const { startCleanupChecks, stopCleanupChecks } = useCleanup()
 
 const sidebarCollapsed = ref(false)
 
@@ -156,6 +159,7 @@ onMounted(async () => {
   portsTimer = window.setInterval(refreshPortsIfStale, 5000)
   connectEventStream()
   startUsage()
+  startCleanupChecks()
   await connectBrowser()
   window.addEventListener('click', handleWindowClick)
   window.addEventListener('keydown', handleKeydown)
@@ -172,6 +176,7 @@ onBeforeUnmount(() => {
   window.clearInterval(portsTimer)
   disconnectEventStream()
   stopUsage()
+  stopCleanupChecks()
   stopPortsPolling()
   stopActionTimers()
   disconnectBrowser()
@@ -199,6 +204,7 @@ onBeforeUnmount(() => {
           <HomeView v-if="activeSection === 'home'" />
           <ProjectPage v-else-if="activeSection === 'projects'" />
           <ActivityView v-else-if="activeSection === 'activity'" />
+          <CleanupView v-else-if="activeSection === 'cleanup'" />
           <SettingsView v-else />
         </div>
       </section>
