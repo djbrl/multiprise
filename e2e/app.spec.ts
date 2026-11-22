@@ -100,6 +100,17 @@ test('first run: add a project, launch it, read its logs and stop it', async () 
     await allProjects.getByRole('button', { name: /e2e-shop/ }).click()
     await expect(page.getByText('1 of 1 ready')).toBeVisible()
     await expect(page.getByText(/e2e server listening on \d+/)).toBeVisible()
+  })
+
+  await test.step('the in-app browser shows it', async () => {
+    await page.getByRole('button', { name: 'Open here' }).click()
+    // The page is a native view the main process places over the browser panel.
+    const shown = () => app.evaluate(({ BrowserWindow }) => {
+      const main = BrowserWindow.getAllWindows().find((w) => /renderer\/dist\/index\.html$/.test(w.webContents.getURL()))
+      const view = main?.contentView.children.find((child) => 'webContents' in child) as { webContents: Electron.WebContents } | undefined
+      return view?.webContents.getURL() ?? ''
+    })
+    await expect.poll(shown).toMatch(/^http:\/\/localhost:\d+/)
     await page.getByTitle('Home').click()
   })
 

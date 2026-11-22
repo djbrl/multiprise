@@ -4,8 +4,9 @@ import { btnPanelIcon, btnPanelSecondary, inputBase, noScrollbar, spinnerClass }
 
 // The in-app browser's tabs, toolbar, and the placeholder its native page view covers.
 
+// browserViewport is the template ref below: its position tells the main process where to place the page.
 const {
-  browserState, browserAddress, browserAddressEditing, activeBrowserTab,
+  browserState, browserAddress, browserAddressEditing, browserViewport, activeBrowserTab,
   browserAction, activateBrowserTab, closeBrowserTab, navigateBrowser, toggleBrowserAttachment
 } = useBrowserTabs()
 </script>
